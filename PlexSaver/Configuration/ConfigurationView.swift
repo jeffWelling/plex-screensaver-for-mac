@@ -10,163 +10,52 @@ struct ConfigurationView: View {
     var onClose: (() -> Void)?
 
     var body: some View {
-        VStack(spacing: 16) {
-            Form {
-                Section("Plex Account") {
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(spacing: 16) {
+                    GroupBox("Plex Account") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            if viewModel.isSignedIn {
+                                signedInView
+                            } else if !viewModel.discoveredServers.isEmpty {
+                                serverPickerView
+                            } else {
+                                signInView
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+
                     if viewModel.isSignedIn {
-                        // Signed in — show server info
-                        HStack {
-                            Image(systemName: "checkmark.circle.fill")
-                                .foregroundColor(.green)
-                            Text(viewModel.plexServerURL)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                            Spacer()
-                            Button("Change Server") {
-                                viewModel.changeServer()
-                            }
-                            Button("Sign Out") {
-                                viewModel.signOut()
+                        if let result = viewModel.testResult {
+                            GroupBox("Connection") {
+                                connectionView(result: result)
                             }
                         }
 
-                        if !viewModel.signInStatus.isEmpty {
-                            Text(viewModel.signInStatus)
-                                .foregroundColor(.secondary)
-                                .font(.caption)
-                        }
-                    } else if !viewModel.discoveredServers.isEmpty {
-                        // Servers discovered — pick one
-                        Text("Select a server:")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-
-                        ForEach(viewModel.discoveredServers) { server in
-                            Button {
-                                viewModel.selectServer(server)
-                            } label: {
-                                HStack {
-                                    Image(systemName: "server.rack")
-                                    VStack(alignment: .leading) {
-                                        Text(server.name)
-                                        Text(server.uri)
-                                            .font(.caption)
-                                            .foregroundColor(.secondary)
-                                    }
-                                    Spacer()
-                                    if server.isLocal {
-                                        Text("Local")
-                                            .font(.caption2)
-                                            .padding(.horizontal, 6)
-                                            .padding(.vertical, 2)
-                                            .background(.green.opacity(0.2))
-                                            .cornerRadius(4)
-                                    }
-                                }
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    } else {
-                        // Not signed in — show sign in button
-                        HStack {
-                            Button {
-                                viewModel.signInWithPlex()
-                            } label: {
-                                HStack {
-                                    Image(systemName: "person.badge.key")
-                                    Text("Sign in with Plex")
-                                }
-                            }
-                            .disabled(viewModel.isSigningIn)
-
-                            if viewModel.isSigningIn {
-                                ProgressView()
-                                    .scaleEffect(0.7)
-                                    .frame(width: 16, height: 16)
-                            }
+                        GroupBox("Grid Layout") {
+                            gridLayoutView
                         }
 
-                        if !viewModel.signInStatus.isEmpty {
-                            Text(viewModel.signInStatus)
-                                .foregroundColor(.secondary)
-                                .font(.caption)
+                        GroupBox("Timing") {
+                            timingView
                         }
-                    }
-                }
 
-                if viewModel.isSignedIn {
-                    if let result = viewModel.testResult {
-                        Section("Connection") {
-                            HStack {
-                                Image(systemName: result ? "checkmark.circle.fill" : "xmark.circle.fill")
-                                    .foregroundColor(result ? .green : .red)
-                                Text(viewModel.testMessage)
-                                    .foregroundColor(.secondary)
-
-                                Spacer()
-
-                                if viewModel.isTesting {
-                                    ProgressView()
-                                        .scaleEffect(0.7)
-                                        .frame(width: 16, height: 16)
-                                }
-
-                                Button("Retest") {
-                                    viewModel.testConnection()
-                                }
-                            }
+                        GroupBox("Image Source") {
+                            imageSourceView
                         }
-                    }
 
-                    Section("Grid Layout") {
-                        Stepper("Rows: \(viewModel.gridRows)", value: $viewModel.gridRows, in: 1...10)
-                        Stepper("Columns: \(viewModel.gridColumns)", value: $viewModel.gridColumns, in: 1...10)
-
-                        Text("\(viewModel.gridRows * viewModel.gridColumns) cells total")
-                            .foregroundColor(.secondary)
-                            .font(.caption)
-                    }
-
-                    Section("Timing") {
-                        HStack {
-                            Text("Rotation interval:")
-                            Slider(value: $viewModel.rotationInterval, in: 2...30, step: 1)
-                            Text("\(Int(viewModel.rotationInterval))s")
-                                .monospacedDigit()
-                                .frame(width: 30, alignment: .trailing)
-                        }
-                    }
-
-                    Section("Image Source") {
-                        Picker("Source:", selection: $viewModel.imageSource) {
-                            ForEach(ImageSourceType.allCases, id: \.self) { source in
-                                Text(source.displayName).tag(source)
-                            }
-                        }
-                        .pickerStyle(.segmented)
-                    }
-
-                    if !viewModel.discoveredLibraries.isEmpty {
-                        Section("Libraries") {
-                            Text("Select libraries to include:")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-
-                            ForEach(viewModel.discoveredLibraries) { library in
-                                Toggle(isOn: viewModel.libraryBinding(for: library.key)) {
-                                    HStack {
-                                        Text(library.title)
-                                        Text("(\(library.type))")
-                                            .foregroundColor(.secondary)
-                                            .font(.caption)
-                                    }
-                                }
+                        if !viewModel.discoveredLibraries.isEmpty {
+                            GroupBox("Libraries") {
+                                librariesView
                             }
                         }
                     }
                 }
+                .padding()
             }
-            .formStyle(.grouped)
+
+            Divider()
 
             HStack {
                 Spacer()
@@ -176,19 +65,169 @@ struct ConfigurationView: View {
                 .keyboardShortcut(.defaultAction)
             }
             .padding(.horizontal)
-            .padding(.bottom, 12)
+            .padding(.vertical, 12)
         }
-        .frame(width: 480, height: dynamicHeight)
+        .frame(width: 480, height: 520)
         .background(Color(nsColor: NSColor.windowBackgroundColor))
     }
 
-    private var dynamicHeight: CGFloat {
-        if !viewModel.isSignedIn && viewModel.discoveredServers.isEmpty {
-            return 220
+    // MARK: - Subviews
+
+    private var signedInView: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundColor(.green)
+                Text(viewModel.plexServerURL)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer()
+                Button("Change Server") {
+                    viewModel.changeServer()
+                }
+                Button("Sign Out") {
+                    viewModel.signOut()
+                }
+            }
+
+            if !viewModel.signInStatus.isEmpty {
+                Text(viewModel.signInStatus)
+                    .foregroundColor(.secondary)
+                    .font(.caption)
+            }
         }
-        if !viewModel.discoveredServers.isEmpty && !viewModel.isSignedIn {
-            return CGFloat(220 + viewModel.discoveredServers.count * 50)
+    }
+
+    private var serverPickerView: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Select a server:")
+                .font(.caption)
+                .foregroundColor(.secondary)
+
+            ForEach(viewModel.discoveredServers) { server in
+                Button {
+                    viewModel.selectServer(server)
+                } label: {
+                    HStack {
+                        Image(systemName: "server.rack")
+                        VStack(alignment: .leading) {
+                            Text(server.name)
+                            Text(server.uri)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        Spacer()
+                        if server.isLocal {
+                            Text("Local")
+                                .font(.caption2)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(.green.opacity(0.2))
+                                .cornerRadius(4)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+            }
         }
-        return viewModel.discoveredLibraries.isEmpty ? 480 : 620
+    }
+
+    private var signInView: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Button {
+                    viewModel.signInWithPlex()
+                } label: {
+                    HStack {
+                        Image(systemName: "person.badge.key")
+                        Text("Sign in with Plex")
+                    }
+                }
+                .disabled(viewModel.isSigningIn)
+
+                if viewModel.isSigningIn {
+                    ProgressView()
+                        .scaleEffect(0.7)
+                        .frame(width: 16, height: 16)
+                }
+            }
+
+            if !viewModel.signInStatus.isEmpty {
+                Text(viewModel.signInStatus)
+                    .foregroundColor(.secondary)
+                    .font(.caption)
+            }
+        }
+    }
+
+    private func connectionView(result: Bool) -> some View {
+        HStack {
+            Image(systemName: result ? "checkmark.circle.fill" : "xmark.circle.fill")
+                .foregroundColor(result ? .green : .red)
+            Text(viewModel.testMessage)
+                .foregroundColor(.secondary)
+
+            Spacer()
+
+            if viewModel.isTesting {
+                ProgressView()
+                    .scaleEffect(0.7)
+                    .frame(width: 16, height: 16)
+            }
+
+            Button("Retest") {
+                viewModel.testConnection()
+            }
+        }
+    }
+
+    private var gridLayoutView: some View {
+        VStack {
+            Stepper("Rows: \(viewModel.gridRows)", value: $viewModel.gridRows, in: 1...10)
+            Stepper("Columns: \(viewModel.gridColumns)", value: $viewModel.gridColumns, in: 1...10)
+
+            Text("\(viewModel.gridRows * viewModel.gridColumns) cells total")
+                .foregroundColor(.secondary)
+                .font(.caption)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var timingView: some View {
+        HStack {
+            Text("Rotation interval:")
+            Slider(value: $viewModel.rotationInterval, in: 2...30, step: 1)
+            Text("\(Int(viewModel.rotationInterval))s")
+                .monospacedDigit()
+                .frame(width: 30, alignment: .trailing)
+        }
+    }
+
+    private var imageSourceView: some View {
+        Picker("Source:", selection: $viewModel.imageSource) {
+            ForEach(ImageSourceType.allCases, id: \.self) { source in
+                Text(source.displayName).tag(source)
+            }
+        }
+        .pickerStyle(.segmented)
+    }
+
+    private var librariesView: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Select libraries to include:")
+                .font(.caption)
+                .foregroundColor(.secondary)
+
+            ForEach(viewModel.discoveredLibraries) { library in
+                Toggle(isOn: viewModel.libraryBinding(for: library.key)) {
+                    HStack {
+                        Text(library.title)
+                        Text("(\(library.type))")
+                            .foregroundColor(.secondary)
+                            .font(.caption)
+                    }
+                }
+            }
+        }
     }
 }

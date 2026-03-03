@@ -28,6 +28,7 @@ class ConfigureSheetController: NSObject {
         window?.styleMask = [.titled, .closable]
         window?.isReleasedWhenClosed = false
         window?.setContentSize(NSSize(width: 480, height: 480))
+        window?.center()
         window?.delegate = self
     }
 
