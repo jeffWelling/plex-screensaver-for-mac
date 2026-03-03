@@ -62,6 +62,10 @@ open ~/Library/Developer/Xcode/DerivedData/PlexSaver-*/Build/Products/Debug/Save
 - Plex API via async/await `URLSession`
 - SwiftUI configuration sheet hosted in `NSHostingController`
 
+## License
+
+This project is licensed under the [GNU General Public License v3.0](LICENSE).
+
 ## Created By
 
 This project was created entirely by [Claude Code](https://claude.ai/claude-code) with Anthropic's Claude Opus 4.6.

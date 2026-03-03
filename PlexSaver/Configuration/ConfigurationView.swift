@@ -22,6 +22,9 @@ struct ConfigurationView: View {
                                 .lineLimit(1)
                                 .truncationMode(.middle)
                             Spacer()
+                            Button("Change Server") {
+                                viewModel.changeServer()
+                            }
                             Button("Sign Out") {
                                 viewModel.signOut()
                             }

@@ -39,6 +39,8 @@ class ConfigurationViewModel: ObservableObject {
             isSignedIn = true
             selectedServerURI = plexServerURL
         }
+        // Restore persisted auth token for server re-discovery
+        authToken = Preferences.plexAuthToken
     }
 
     // MARK: - Plex OAuth Sign-In
@@ -67,6 +69,7 @@ class ConfigurationViewModel: ObservableObject {
                 // Step 3: Poll for token
                 let token = try await auth.pollForToken(pinId: pin.id, code: pin.code)
                 self.authToken = token
+                Preferences.plexAuthToken = token
 
                 await MainActor.run {
                     self.signInStatus = "Discovering servers..."
@@ -108,6 +111,44 @@ class ConfigurationViewModel: ObservableObject {
         testConnection()
     }
 
+    func changeServer() {
+        guard !authToken.isEmpty else {
+            // No auth token stored — need to sign in again
+            signOut()
+            return
+        }
+
+        isSignedIn = false
+        isSigningIn = true
+        signInStatus = "Discovering servers..."
+        discoveredLibraries = []
+        testResult = nil
+        testMessage = ""
+
+        Task {
+            do {
+                let auth = PlexAuth()
+                let servers = try await auth.discoverServers(authToken: authToken)
+
+                await MainActor.run {
+                    self.isSigningIn = false
+                    self.discoveredServers = servers
+
+                    if servers.isEmpty {
+                        self.signInStatus = "No servers found"
+                    } else {
+                        self.signInStatus = "Select a server"
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    self.isSigningIn = false
+                    self.signInStatus = "Failed to discover servers — try signing out and back in"
+                }
+            }
+        }
+    }
+
     func signOut() {
         plexServerURL = ""
         plexToken = ""
@@ -120,6 +161,7 @@ class ConfigurationViewModel: ObservableObject {
         testResult = nil
         testMessage = ""
         authToken = ""
+        Preferences.plexAuthToken = ""
     }
 
     // MARK: - Load/Save

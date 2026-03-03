@@ -27,6 +27,9 @@ struct Preferences {
     @SimpleStorage(key: "PlexToken", defaultValue: "")
     static var plexToken: String
 
+    @SimpleStorage(key: "PlexAuthToken", defaultValue: "")
+    static var plexAuthToken: String
+
     @SimpleStorage(key: "GridRows", defaultValue: 3)
     static var gridRows: Int
 
