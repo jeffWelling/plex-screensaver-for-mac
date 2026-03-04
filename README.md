@@ -1,16 +1,25 @@
-# PlexSaver — Plex Grid Screensaver for macOS
+# PlexSaver
 
-A macOS screensaver that connects to your Plex Media Server and displays a rotating mosaic of media artwork. Inspired by the classic Kodi grid screensaver — the "guess the movie" experience.
+A macOS screensaver that connects to your Plex Media Server and displays a rotating mosaic of media artwork — the "guess the movie" experience.
+
+![PlexSaver in action](docs/screenshots/screensaver.png)
 
 ## Features
 
-- **Plex OAuth sign-in** — Browser-based authentication, no manual token needed
-- **Server auto-discovery** — Finds your Plex servers automatically after sign-in
-- **Configurable grid** — Adjustable rows, columns, and rotation interval
-- **Crossfade transitions** — Smooth per-cell staggered image transitions
-- **Multiple image sources** — Fanart, posters, or mixed
-- **Library selection** — Choose which Plex libraries to display
-- **Status feedback** — Loading and error messages shown on screen
+- **Plex OAuth sign-in** — browser-based authentication, no manual token
+- **Server auto-discovery** — finds your Plex servers after sign-in
+- **Configurable grid** — adjustable rows, columns, and rotation interval
+- **Crossfade transitions** — smooth per-cell staggered image swaps
+- **Multiple image sources** — fanart, posters, or mixed
+- **Library selection** — choose which Plex libraries to display
+- **Persistent image cache** — instant startup from disk cache, no waiting
+- **Offline mode** — shows cached images when Plex is unreachable
+
+## Screenshots
+
+| Screensaver | Preferences |
+|:-----------:|:-----------:|
+| ![Screensaver](docs/screenshots/screensaver.png) | ![Preferences](docs/screenshots/preferences.png) |
 
 ## Installation
 
@@ -23,25 +32,34 @@ A macOS screensaver that connects to your Plex Media Server and displays a rotat
 
 ### Build from Source
 
-Requires Xcode 16+ and macOS 15+.
+Requires Xcode 16+ and macOS 15 (Sequoia)+.
 
 ```bash
 git clone https://github.com/jeffWelling/plex-screensaver-for-mac.git
 cd plex-screensaver-for-mac
+
+# Build the screensaver bundle
 xcodebuild -scheme PlexSaver -configuration Release build
+
+# Install it
+cp -R ~/Library/Developer/Xcode/DerivedData/PlexSaver-*/Build/Products/Release/PlexSaver.saver ~/Library/Screen\ Savers/
 ```
 
-The built `.saver` bundle will be in `~/Library/Developer/Xcode/DerivedData/PlexSaver-*/Build/Products/Release/`.
+## Development
 
-Double-click the `.saver` file to install, or copy it to `~/Library/Screen Savers/`.
-
-### Development
-
-Use the SaverTest app target for development — it runs the screensaver in a regular window without needing to install:
+Use the **SaverTest** app target for development — it runs the screensaver in a regular window without installing it as a system screensaver:
 
 ```bash
 xcodebuild -scheme SaverTest -configuration Debug build
 open ~/Library/Developer/Xcode/DerivedData/PlexSaver-*/Build/Products/Debug/SaverTest.app
+```
+
+Or open `PlexSaver.xcodeproj` in Xcode, select the SaverTest scheme, and hit Run.
+
+### Viewing Logs
+
+```bash
+log stream --predicate 'subsystem CONTAINS "PlexSaver" OR subsystem CONTAINS "SaverTest"' --level debug
 ```
 
 ## Configuration
@@ -51,16 +69,41 @@ open ~/Library/Developer/Xcode/DerivedData/PlexSaver-*/Build/Products/Debug/Save
 | Grid Rows | 3 | Number of rows in the image grid |
 | Grid Columns | 4 | Number of columns in the image grid |
 | Rotation Interval | 5s | Seconds between image transitions per cell |
-| Image Source | Fanart | Fanart (backgrounds), Posters, or Mixed |
+| Image Source | Fanart | Fanart (16:9 backgrounds), Posters (2:3), or Mixed |
 | Libraries | All | Which Plex libraries to pull images from |
 
-## Architecture
+## How It Works
+
+PlexSaver uses a two-phase startup to eliminate cold-start delays:
+
+**Phase 1 — Instant (disk cache):** On launch, the screensaver checks `~/Library/Caches/com.plexsaver.PlexSaver/` for previously cached images. If found, the grid is filled immediately and rotation begins while a small "Connecting to Plex..." status appears at the bottom.
+
+**Phase 2 — Background (network):** A Plex API connection is established in the background. Once the image pool is filled from the network, it seamlessly takes over rotation from the cached images. New images are written through to the disk cache for next time.
+
+If Plex is unreachable and cached images exist, the screensaver continues showing them with a brief "Offline" notice. If no cache exists and no connection can be made, an error message is displayed.
+
+### Architecture
 
 - `ScreenSaverView` subclass with `CALayer`-based grid rendering
 - Dual-layer crossfade pattern per cell (GPU-accelerated)
-- Actor-based `ImagePool` with background prefetch and LRU cache
+- Actor-based `ImagePool` with three cache tiers: in-memory → disk → network
+- `DiskCache` actor with JPEG persistence, LRU eviction, and config validation
 - Plex API via async/await `URLSession`
 - SwiftUI configuration sheet hosted in `NSHostingController`
+
+## Troubleshooting
+
+**Screensaver shows "No server configured"**
+Open System Settings → Screen Saver → PlexSaver → Options and sign in with your Plex account.
+
+**Images don't load / "Could not load media"**
+Verify your Plex server is running and accessible from this Mac. Check that at least one library has media with artwork.
+
+**Screensaver doesn't appear in System Settings**
+Ensure `PlexSaver.saver` is in `~/Library/Screen Savers/`. Try removing and re-adding it.
+
+**Cache issues**
+Clear the disk cache by deleting `~/Library/Caches/com.plexsaver.PlexSaver/`. The screensaver will rebuild it on next launch.
 
 ## License
 

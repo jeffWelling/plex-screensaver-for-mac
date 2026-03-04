@@ -12,6 +12,7 @@ actor ImagePool {
     private let cellWidth: Int
     private let cellHeight: Int
     private let cache: ImageCache
+    private let diskCache: DiskCache?
 
     private var mediaItems: [PlexMediaItem] = []
     private var shuffledIndices: [Int] = []
@@ -21,13 +22,14 @@ actor ImagePool {
     private var isRefilling = false
     private var isStopped = false
 
-    init(client: PlexClient, imageSource: ImageSourceType, cellWidth: Int, cellHeight: Int, poolSize: Int) {
+    init(client: PlexClient, imageSource: ImageSourceType, cellWidth: Int, cellHeight: Int, poolSize: Int, diskCache: DiskCache? = nil) {
         self.client = client
         self.imageSource = imageSource
         self.cellWidth = cellWidth
         self.cellHeight = cellHeight
         self.poolSize = poolSize
         self.cache = ImageCache(maxSize: poolSize * 2)
+        self.diskCache = diskCache
     }
 
     /// Load media items from configured libraries. Returns count of items with art.
@@ -122,14 +124,24 @@ actor ImagePool {
             return nil
         }
 
-        // Check cache first
+        // 1. Check in-memory cache
         if let cached = cache.get(artPath) {
             return cached
         }
 
+        // 2. Check disk cache
+        if let disk = diskCache, let cached = await disk.get(artPath) {
+            cache.set(artPath, image: cached)
+            return cached
+        }
+
+        // 3. Fetch from network, write-through to both caches
         do {
             let image = try await client.fetchImage(imagePath: artPath, width: cellWidth, height: cellHeight)
             cache.set(artPath, image: image)
+            if let disk = diskCache {
+                await disk.store(artPath, image: image)
+            }
             return image
         } catch {
             OSLog.info("ImagePool: Failed to fetch image for \(item.title): \(error.localizedDescription)")
