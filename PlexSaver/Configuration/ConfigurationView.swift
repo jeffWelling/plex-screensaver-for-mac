@@ -194,7 +194,7 @@ struct ConfigurationView: View {
 
     private var timingView: some View {
         HStack {
-            Text("Rotation interval:")
+            Text("Delay between changes:")
             Slider(value: $viewModel.rotationInterval, in: 2...30, step: 1)
             Text("\(Int(viewModel.rotationInterval))s")
                 .monospacedDigit()

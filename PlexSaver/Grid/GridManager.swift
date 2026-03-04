@@ -68,16 +68,15 @@ class GridManager {
             lastUpdateTime[i] = now
         }
 
-        // Start the weighted random timer immediately
-        let tickInterval = rotationInterval / Double(cells.count)
-        rotationTimer = Timer.scheduledTimer(withTimeInterval: tickInterval, repeats: true) { [weak self] _ in
+        // One cell changes every rotationInterval seconds
+        rotationTimer = Timer.scheduledTimer(withTimeInterval: rotationInterval, repeats: true) { [weak self] _ in
             self?.rotateWeightedRandomCell()
         }
         if let timer = rotationTimer {
             RunLoop.main.add(timer, forMode: .common)
         }
 
-        OSLog.info("GridManager: Started rotation with \(rotationInterval)s interval, \(String(format: "%.2f", tickInterval))s tick")
+        OSLog.info("GridManager: Started rotation, one cell every \(String(format: "%.0f", rotationInterval))s")
     }
 
     func stopRotation() {
