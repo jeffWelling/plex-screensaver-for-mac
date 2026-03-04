@@ -12,47 +12,39 @@ struct ConfigurationView: View {
     var body: some View {
         VStack(spacing: 0) {
             ScrollView {
-                VStack(spacing: 16) {
-                    GroupBox("Plex Account") {
-                        VStack(alignment: .leading, spacing: 8) {
-                            if viewModel.isSignedIn {
-                                signedInView
-                            } else if !viewModel.discoveredServers.isEmpty {
-                                serverPickerView
-                            } else {
-                                signInView
-                            }
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .leading, spacing: 12) {
+                    // Plex Account
+                    sectionHeader("Plex Account")
+                    if viewModel.isSignedIn {
+                        signedInView
+                    } else if !viewModel.discoveredServers.isEmpty {
+                        serverPickerView
+                    } else {
+                        signInView
                     }
 
                     if viewModel.isSignedIn {
                         if let result = viewModel.testResult {
-                            GroupBox("Connection") {
-                                connectionView(result: result)
-                            }
+                            connectionView(result: result)
                         }
 
-                        GroupBox("Grid Layout") {
-                            gridLayoutView
-                        }
+                        Divider()
 
-                        GroupBox("Timing") {
-                            timingView
-                        }
-
-                        GroupBox("Image Source") {
-                            imageSourceView
-                        }
+                        // Display
+                        sectionHeader("Display")
+                        gridLayoutView
+                        timingView
+                        imageSourceView
 
                         if !viewModel.discoveredLibraries.isEmpty {
-                            GroupBox("Libraries") {
-                                librariesView
-                            }
+                            Divider()
+                            sectionHeader("Libraries")
+                            librariesView
                         }
                     }
                 }
-                .padding()
+                .padding(.horizontal, 20)
+                .padding(.vertical, 16)
             }
 
             Divider()
@@ -64,23 +56,37 @@ struct ConfigurationView: View {
                 }
                 .keyboardShortcut(.defaultAction)
             }
-            .padding(.horizontal)
-            .padding(.vertical, 12)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 10)
         }
-        .frame(width: 480, height: 520)
+        .frame(width: 420, height: 400)
         .background(Color(nsColor: NSColor.windowBackgroundColor))
+    }
+
+    private func sectionHeader(_ title: String) -> some View {
+        Text(title)
+            .font(.headline)
+            .foregroundColor(.primary)
     }
 
     // MARK: - Subviews
 
     private var signedInView: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Image(systemName: "checkmark.circle.fill")
                     .foregroundColor(.green)
                 Text(viewModel.plexServerURL)
                     .lineLimit(1)
                     .truncationMode(.middle)
+            }
+
+            HStack {
+                if !viewModel.signInStatus.isEmpty {
+                    Text(viewModel.signInStatus)
+                        .foregroundColor(.secondary)
+                        .font(.caption)
+                }
                 Spacer()
                 Button("Change Server") {
                     viewModel.changeServer()
@@ -88,12 +94,6 @@ struct ConfigurationView: View {
                 Button("Sign Out") {
                     viewModel.signOut()
                 }
-            }
-
-            if !viewModel.signInStatus.isEmpty {
-                Text(viewModel.signInStatus)
-                    .foregroundColor(.secondary)
-                    .font(.caption)
             }
         }
     }
@@ -182,14 +182,13 @@ struct ConfigurationView: View {
     }
 
     private var gridLayoutView: some View {
-        VStack {
+        HStack(spacing: 16) {
             Stepper("Rows: \(viewModel.gridRows)", value: $viewModel.gridRows, in: 1...10)
-            Stepper("Columns: \(viewModel.gridColumns)", value: $viewModel.gridColumns, in: 1...10)
-
-            Text("\(viewModel.gridRows * viewModel.gridColumns) cells total")
+            Stepper("Cols: \(viewModel.gridColumns)", value: $viewModel.gridColumns, in: 1...10)
+            Spacer()
+            Text("\(viewModel.gridRows * viewModel.gridColumns) cells")
                 .foregroundColor(.secondary)
                 .font(.caption)
-                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 

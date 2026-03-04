@@ -27,7 +27,7 @@ class ConfigureSheetController: NSObject {
         window?.title = "PlexSaver Preferences"
         window?.styleMask = [.titled, .closable]
         window?.isReleasedWhenClosed = false
-        window?.setContentSize(NSSize(width: 480, height: 480))
+        window?.setContentSize(NSSize(width: 420, height: 400))
         window?.center()
         window?.delegate = self
     }

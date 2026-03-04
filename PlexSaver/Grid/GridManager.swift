@@ -10,11 +10,12 @@ import os.log
 class GridManager {
     let rootLayer = CALayer()
     private(set) var cells: [GridCell] = []
-    private var cellTimers: [Timer] = []
+    private var rotationTimer: Timer?
     private var imagePool: ImagePool?
     private let rows: Int
     private let columns: Int
     private let rotationInterval: TimeInterval
+    private var lastUpdateTime: [Int: Date] = [:]
 
     init(frame: CGRect, rows: Int, columns: Int, rotationInterval: TimeInterval) {
         self.rows = max(1, rows)
@@ -59,43 +60,64 @@ class GridManager {
 
     func startRotation(imagePool: ImagePool) {
         self.imagePool = imagePool
-        let totalCells = cells.count
-        let staggerDelay = rotationInterval / Double(totalCells)
 
-        for (index, cell) in cells.enumerated() {
-            let initialDelay = staggerDelay * Double(index)
-
-            // Fire first image immediately for each cell (staggered)
-            let firstTimer = Timer.scheduledTimer(withTimeInterval: initialDelay, repeats: false) { [weak self] _ in
-                self?.rotateCell(cell)
-            }
-            RunLoop.main.add(firstTimer, forMode: .common)
-
-            // Then set up repeating timer
-            let repeatingTimer = Timer.scheduledTimer(
-                withTimeInterval: rotationInterval,
-                repeats: true
-            ) { [weak self] _ in
-                self?.rotateCell(cell)
-            }
-            // Offset the first fire of the repeating timer
-            repeatingTimer.fireDate = Date().addingTimeInterval(initialDelay + rotationInterval)
-            RunLoop.main.add(repeatingTimer, forMode: .common)
-
-            cellTimers.append(firstTimer)
-            cellTimers.append(repeatingTimer)
+        // Fill all cells at once (hidden behind fade-in overlay)
+        let now = Date()
+        for i in 0..<cells.count {
+            rotateCell(at: i)
+            lastUpdateTime[i] = now
         }
 
-        OSLog.info("GridManager: Started rotation with \(rotationInterval)s interval, \(String(format: "%.2f", staggerDelay))s stagger")
+        // Start the weighted random timer immediately
+        let tickInterval = rotationInterval / Double(cells.count)
+        rotationTimer = Timer.scheduledTimer(withTimeInterval: tickInterval, repeats: true) { [weak self] _ in
+            self?.rotateWeightedRandomCell()
+        }
+        if let timer = rotationTimer {
+            RunLoop.main.add(timer, forMode: .common)
+        }
+
+        OSLog.info("GridManager: Started rotation with \(rotationInterval)s interval, \(String(format: "%.2f", tickInterval))s tick")
     }
 
     func stopRotation() {
-        for timer in cellTimers {
-            timer.invalidate()
-        }
-        cellTimers.removeAll()
+        rotationTimer?.invalidate()
+        rotationTimer = nil
         imagePool = nil
         OSLog.info("GridManager: Stopped rotation")
+    }
+
+    // MARK: - Weighted Random Selection
+
+    private func rotateWeightedRandomCell() {
+        guard !cells.isEmpty else { return }
+
+        let now = Date()
+
+        // Weight = base randomness + staleness bonus (squared)
+        // The base of 1.0 ensures true randomness even when all cells are equally fresh.
+        // The staleness term ensures neglected cells get picked more often over time.
+        var weights: [Double] = []
+        for i in 0..<cells.count {
+            let elapsed = lastUpdateTime[i].map { now.timeIntervalSince($0) } ?? rotationInterval
+            let staleness = elapsed / rotationInterval  // normalize to ~1.0
+            weights.append(1.0 + staleness * staleness)
+        }
+
+        let totalWeight = weights.reduce(0, +)
+
+        // Weighted random pick
+        var roll = Double.random(in: 0..<totalWeight)
+        var chosen = 0
+        for i in 0..<weights.count {
+            roll -= weights[i]
+            if roll <= 0 {
+                chosen = i
+                break
+            }
+        }
+
+        rotateCell(at: chosen)
     }
 
     // MARK: - Resize
@@ -118,8 +140,10 @@ class GridManager {
 
     // MARK: - Private
 
-    private func rotateCell(_ cell: GridCell) {
-        guard let pool = imagePool else { return }
+    private func rotateCell(at index: Int) {
+        guard let pool = imagePool, index < cells.count else { return }
+        let cell = cells[index]
+        lastUpdateTime[index] = Date()
 
         Task {
             if let image = await pool.takeImage() {
