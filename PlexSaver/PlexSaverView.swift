@@ -24,6 +24,7 @@ class PlexSaverView: ScreenSaverView {
     private var initialFadeLayer: CALayer?
     private var statusLayer: CATextLayer?
     private var statusBackdropLayer: CALayer?
+    private var versionLayer: CATextLayer?
 
     // Cached-image rotation (Phase 1, before ImagePool takes over)
     private var cachedImages: [NSImage] = []
@@ -112,6 +113,7 @@ class PlexSaverView: ScreenSaverView {
         isAnimationStarted = true
 
         setupGrid()
+        showVersionOverlay()
         startImagePipeline()
     }
 
@@ -244,6 +246,46 @@ class PlexSaverView: ScreenSaverView {
 
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
                 self?.removeStatusLayer()
+            }
+        }
+    }
+
+    // MARK: - Version Overlay
+
+    private func showVersionOverlay() {
+        guard let rootLayer = self.layer else { return }
+
+        let bundle = Bundle(for: PlexSaverView.self)
+        let version = bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
+        let build = bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"
+
+        let textLayer = CATextLayer()
+        textLayer.contentsScale = NSScreen.main?.backingScaleFactor ?? 2.0
+        textLayer.string = "v\(version) (\(build))"
+        textLayer.fontSize = 11
+        textLayer.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+        textLayer.foregroundColor = CGColor(gray: 0.5, alpha: 0.7)
+        textLayer.alignmentMode = .right
+        textLayer.frame = CGRect(
+            x: bounds.width - 200 - 8,
+            y: 8,
+            width: 200,
+            height: 16
+        )
+        rootLayer.addSublayer(textLayer)
+        versionLayer = textLayer
+
+        // Fade out after 5 seconds
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) { [weak self] in
+            guard let self = self, let layer = self.versionLayer else { return }
+            CATransaction.begin()
+            CATransaction.setAnimationDuration(1.0)
+            layer.opacity = 0
+            CATransaction.commit()
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                self?.versionLayer?.removeFromSuperlayer()
+                self?.versionLayer = nil
             }
         }
     }
