@@ -34,6 +34,7 @@ struct ConfigurationView: View {
                         sectionHeader("Display")
                         gridLayoutView
                         timingView
+                        titleRevealView
                         imageSourceView
 
                         if !viewModel.discoveredLibraries.isEmpty {
@@ -199,6 +200,26 @@ struct ConfigurationView: View {
             Text("\(Int(viewModel.rotationInterval))s")
                 .monospacedDigit()
                 .frame(width: 30, alignment: .trailing)
+        }
+    }
+
+    private var titleRevealView: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Toggle("Show title before rotation", isOn: $viewModel.showTitleReveal)
+
+            if viewModel.showTitleReveal {
+                HStack {
+                    Text("Title duration:")
+                    Slider(
+                        value: $viewModel.titleDisplayDuration,
+                        in: 1...max(1, viewModel.rotationInterval - 1),
+                        step: 0.5
+                    )
+                    Text("\(String(format: "%.1f", viewModel.titleDisplayDuration))s")
+                        .monospacedDigit()
+                        .frame(width: 35, alignment: .trailing)
+                }
+            }
         }
     }
 

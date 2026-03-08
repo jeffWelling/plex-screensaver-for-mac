@@ -14,6 +14,8 @@ class ConfigurationViewModel: ObservableObject {
     @Published var rotationInterval: Double = 5.0
     @Published var imageSource: ImageSourceType = .fanart
     @Published var selectedLibraryIds: Set<String> = []
+    @Published var showTitleReveal: Bool = true
+    @Published var titleDisplayDuration: Double = 2.0
     @Published var discoveredLibraries: [PlexLibrary] = []
 
     // Auth state
@@ -174,6 +176,8 @@ class ConfigurationViewModel: ObservableObject {
         rotationInterval = Preferences.rotationInterval
         imageSource = Preferences.imageSource
         selectedLibraryIds = Set(Preferences.selectedLibraryIds)
+        showTitleReveal = Preferences.showTitleReveal
+        titleDisplayDuration = Preferences.titleDisplayDuration
     }
 
     private func setupBindings() {
@@ -205,6 +209,14 @@ class ConfigurationViewModel: ObservableObject {
 
         $selectedLibraryIds
             .sink { Preferences.selectedLibraryIds = Array($0) }
+            .store(in: &cancellables)
+
+        $showTitleReveal
+            .sink { Preferences.showTitleReveal = $0 }
+            .store(in: &cancellables)
+
+        $titleDisplayDuration
+            .sink { Preferences.titleDisplayDuration = $0 }
             .store(in: &cancellables)
     }
 
