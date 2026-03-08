@@ -57,3 +57,36 @@ struct PlexMediaItem: Decodable {
         }
     }
 }
+
+// MARK: - Provider Conversions
+
+extension PlexMediaItem {
+    /// Convert to provider-agnostic MediaItem
+    func toMediaItem() -> MediaItem {
+        var paths: [ImageSourceType: String] = [:]
+
+        // Fanart: prefer art, fall back to grandparentArt
+        if let artPath = art ?? grandparentArt {
+            paths[.fanart] = artPath
+        }
+
+        // Posters: prefer thumb, fall back to parentThumb, grandparentThumb
+        if let posterPath = thumb ?? parentThumb ?? grandparentThumb {
+            paths[.posters] = posterPath
+        }
+
+        return MediaItem(
+            id: ratingKey,
+            title: title,
+            year: year,
+            artPaths: paths
+        )
+    }
+}
+
+extension PlexLibrary {
+    /// Convert to provider-agnostic MediaLibrary
+    func toMediaLibrary() -> MediaLibrary {
+        MediaLibrary(id: key, name: title, type: type)
+    }
+}
