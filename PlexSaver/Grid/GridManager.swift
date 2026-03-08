@@ -16,11 +16,17 @@ class GridManager {
     private let columns: Int
     private let rotationInterval: TimeInterval
     private var lastUpdateTime: [Int: Date] = [:]
+    private var showTitleReveal: Bool
+    private var titleDisplayDuration: TimeInterval
+    private let crossfadeDuration: TimeInterval = 1.0
+    private var cellMetadata: [Int: (title: String, year: Int?)] = [:]
 
-    init(frame: CGRect, rows: Int, columns: Int, rotationInterval: TimeInterval) {
+    init(frame: CGRect, rows: Int, columns: Int, rotationInterval: TimeInterval, showTitleReveal: Bool = true, titleDisplayDuration: TimeInterval = 2.0) {
         self.rows = max(1, rows)
         self.columns = max(1, columns)
         self.rotationInterval = rotationInterval
+        self.showTitleReveal = showTitleReveal
+        self.titleDisplayDuration = min(titleDisplayDuration, rotationInterval - 1.0)
 
         rootLayer.frame = frame
         rootLayer.backgroundColor = CGColor.black
@@ -61,10 +67,10 @@ class GridManager {
     func startRotation(imagePool: ImagePool) {
         self.imagePool = imagePool
 
-        // Fill all cells at once (hidden behind fade-in overlay)
+        // Fill all cells at once (hidden behind fade-in overlay) — no title reveal on initial fill
         let now = Date()
         for i in 0..<cells.count {
-            rotateCell(at: i)
+            rotateCellImmediate(at: i)
             lastUpdateTime[i] = now
         }
 
@@ -139,17 +145,58 @@ class GridManager {
 
     // MARK: - Private
 
+    /// Immediate rotation without title reveal — used for initial grid fill.
+    private func rotateCellImmediate(at index: Int) {
+        guard let pool = imagePool, index < cells.count else { return }
+        let cell = cells[index]
+        lastUpdateTime[index] = Date()
+
+        Task {
+            if let item = await pool.takeImage() {
+                await MainActor.run {
+                    cell.displayImage(item.image, transitionDuration: 0)
+                    self.cellMetadata[index] = (title: item.title, year: item.year)
+                }
+            }
+        }
+    }
+
+    /// Rotate a cell, optionally showing the current title before crossfading to new image.
     private func rotateCell(at index: Int) {
         guard let pool = imagePool, index < cells.count else { return }
         let cell = cells[index]
         lastUpdateTime[index] = Date()
 
         Task {
-            if let image = await pool.takeImage() {
+            if let newItem = await pool.takeImage() {
                 await MainActor.run {
-                    cell.displayImage(image, transitionDuration: 1.0)
+                    if self.showTitleReveal {
+                        self.revealThenRotate(cell: cell, index: index, newItem: newItem)
+                    } else {
+                        cell.displayImage(newItem.image, transitionDuration: self.crossfadeDuration)
+                        self.cellMetadata[index] = (title: newItem.title, year: newItem.year)
+                    }
                 }
             }
+        }
+    }
+
+    /// Two-phase rotation: reveal current title, then crossfade to new image.
+    private func revealThenRotate(cell: GridCell, index: Int, newItem: ImageWithMetadata) {
+        // Show the outgoing image's title
+        if let metadata = cellMetadata[index] {
+            var titleText = metadata.title
+            if let year = metadata.year {
+                titleText += " (\(year))"
+            }
+            cell.showTitle(titleText)
+        }
+
+        // After title display duration, crossfade to the new image
+        DispatchQueue.main.asyncAfter(deadline: .now() + titleDisplayDuration) { [weak self] in
+            guard let self = self else { return }
+            cell.displayImage(newItem.image, transitionDuration: self.crossfadeDuration)
+            self.cellMetadata[index] = (title: newItem.title, year: newItem.year)
         }
     }
 }
