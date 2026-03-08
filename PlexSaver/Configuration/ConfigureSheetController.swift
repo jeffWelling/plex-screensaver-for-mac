@@ -24,7 +24,7 @@ class ConfigureSheetController: NSObject {
         hostingController = NSHostingController(rootView: configView)
 
         window = NSWindow(contentViewController: hostingController!)
-        window?.title = "PlexSaver Preferences"
+        window?.title = "Montage Preferences"
         window?.styleMask = [.titled, .closable]
         window?.isReleasedWhenClosed = false
         window?.setContentSize(NSSize(width: 420, height: 400))

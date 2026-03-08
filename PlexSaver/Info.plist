@@ -11,9 +11,9 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleDisplayName</key>
-	<string>PlexSaver v$(MARKETING_VERSION)</string>
+	<string>Montage v$(MARKETING_VERSION)</string>
 	<key>CFBundleName</key>
-	<string>PlexSaver v$(MARKETING_VERSION)</string>
+	<string>Montage v$(MARKETING_VERSION)</string>
 	<key>CFBundlePackageType</key>
 	<string>BNDL</string>
 	<key>CFBundleShortVersionString</key>
@@ -25,6 +25,6 @@
 	<key>NSHumanReadableCopyright</key>
 	<string></string>
 	<key>NSPrincipalClass</key>
-	<string>PlexSaver.PlexSaverView</string>
+	<string>PlexSaver.MontageView</string>
 </dict>
 </plist>

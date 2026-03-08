@@ -57,7 +57,7 @@ struct Preferences {
 @propertyWrapper struct Storage<T: Codable> {
     private let key: String
     private let defaultValue: T
-    private let module = Bundle.main.bundleIdentifier ?? "com.plexsaver.PlexSaver"
+    private let module = Bundle.main.bundleIdentifier ?? "com.montage.Montage"
 
     init(key: String, defaultValue: T) {
         self.key = key
@@ -92,7 +92,7 @@ struct Preferences {
 @propertyWrapper struct SimpleStorage<T> {
     private let key: String
     private let defaultValue: T
-    private let module = Bundle.main.bundleIdentifier ?? "com.plexsaver.PlexSaver"
+    private let module = Bundle.main.bundleIdentifier ?? "com.montage.Montage"
 
     init(key: String, defaultValue: T) {
         self.key = key

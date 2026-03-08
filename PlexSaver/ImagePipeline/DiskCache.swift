@@ -22,7 +22,7 @@ actor DiskCache {
 
     init(maxSize: Int = DiskCache.defaultMaxSize) {
         let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
-            .appendingPathComponent("com.plexsaver.PlexSaver", isDirectory: true)
+            .appendingPathComponent("com.montage.Montage", isDirectory: true)
         self.cacheDirectory = base.appendingPathComponent("images", isDirectory: true)
         self.manifestURL = base.appendingPathComponent("manifest.json")
         self.maxSizeBytes = maxSize
