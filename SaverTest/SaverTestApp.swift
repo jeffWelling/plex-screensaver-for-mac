@@ -15,7 +15,6 @@ struct SaverTestApp: App {
         WindowGroup {
             SaverTestContentView()
         }
-        .windowResizability(.contentSize)
         .defaultSize(width: 1280, height: 720)
     }
 }

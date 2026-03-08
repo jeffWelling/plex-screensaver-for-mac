@@ -140,6 +140,12 @@ class PlexSaverView: ScreenSaverView {
         NSBezierPath(rect: bounds).fill()
     }
 
+    override func resize(withOldSuperviewSize oldSize: NSSize) {
+        super.resize(withOldSuperviewSize: oldSize)
+        gridManager?.updateFrame(bounds)
+        initialFadeLayer?.frame = bounds
+    }
+
     override func animateOneFrame() {
         // Animation is timer-driven via GridManager, nothing needed here
     }
