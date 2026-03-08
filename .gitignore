@@ -15,5 +15,8 @@ xcuserdata/
 *.xcuserstate
 *.xcscmblueprint
 
+# Worktrees
+.worktrees/
+
 # macOS
 .DS_Store
