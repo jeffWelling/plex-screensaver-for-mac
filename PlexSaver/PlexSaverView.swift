@@ -248,7 +248,14 @@ class PlexSaverView: ScreenSaverView {
         let rows = Preferences.gridRows
         let columns = Preferences.gridColumns
 
-        let manager = GridManager(frame: bounds, rows: rows, columns: columns, rotationInterval: Preferences.rotationInterval)
+        let manager = GridManager(
+            frame: bounds,
+            rows: rows,
+            columns: columns,
+            rotationInterval: Preferences.rotationInterval,
+            showTitleReveal: Preferences.showTitleReveal,
+            titleDisplayDuration: Preferences.titleDisplayDuration
+        )
 
         guard let rootLayer = self.layer else {
             OSLog.info("setupGrid (\(instanceNumber)): no layer available")
