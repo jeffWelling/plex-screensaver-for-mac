@@ -16,14 +16,25 @@ class ConfigurationViewModel: ObservableObject {
     @Published var selectedLibraryIds: Set<String> = []
     @Published var showTitleReveal: Bool = true
     @Published var titleDisplayDuration: Double = 2.0
-    @Published var discoveredLibraries: [PlexLibrary] = []
+    @Published var discoveredLibraries: [MediaLibrary] = []
 
-    // Auth state
+    // Provider selection
+    @Published var providerType: ProviderType = .plex
+
+    // Plex auth state
     @Published var isSigningIn = false
     @Published var signInStatus = ""
     @Published var isSignedIn = false
     @Published var discoveredServers: [PlexServer] = []
     @Published var selectedServerURI: String = ""
+
+    // Jellyfin
+    @Published var jellyfinServerURL: String = ""
+    @Published var jellyfinUsername: String = ""
+    @Published var jellyfinPassword: String = ""  // Not persisted — cleared after auth
+    @Published var isJellyfinConnected: Bool = false
+    @Published var isJellyfinConnecting: Bool = false
+    @Published var jellyfinStatus: String = ""
 
     // Connection test state
     @Published var isTesting = false
@@ -178,9 +189,18 @@ class ConfigurationViewModel: ObservableObject {
         selectedLibraryIds = Set(Preferences.selectedLibraryIds)
         showTitleReveal = Preferences.showTitleReveal
         titleDisplayDuration = Preferences.titleDisplayDuration
+        providerType = Preferences.providerType
+        jellyfinServerURL = Preferences.jellyfinServerURL
+        jellyfinUsername = Preferences.jellyfinUsername
+        isJellyfinConnected = !Preferences.jellyfinAccessToken.isEmpty
     }
 
     private func setupBindings() {
+        $providerType
+            .dropFirst()
+            .sink { Preferences.providerType = $0 }
+            .store(in: &cancellables)
+
         $plexServerURL
             .debounce(for: .milliseconds(500), scheduler: RunLoop.main)
             .sink { Preferences.plexServerURL = $0 }
@@ -222,14 +242,14 @@ class ConfigurationViewModel: ObservableObject {
 
     // MARK: - Library Binding
 
-    func libraryBinding(for key: String) -> Binding<Bool> {
+    func libraryBinding(for id: String) -> Binding<Bool> {
         Binding<Bool>(
-            get: { self.selectedLibraryIds.contains(key) },
+            get: { self.selectedLibraryIds.contains(id) },
             set: { isSelected in
                 if isSelected {
-                    self.selectedLibraryIds.insert(key)
+                    self.selectedLibraryIds.insert(id)
                 } else {
-                    self.selectedLibraryIds.remove(key)
+                    self.selectedLibraryIds.remove(id)
                 }
             }
         )
@@ -238,6 +258,15 @@ class ConfigurationViewModel: ObservableObject {
     // MARK: - Test Connection
 
     func testConnection() {
+        switch providerType {
+        case .plex:
+            testPlexConnection()
+        case .jellyfin:
+            testJellyfinConnection()
+        }
+    }
+
+    private func testPlexConnection() {
         guard !plexServerURL.isEmpty, !plexToken.isEmpty else { return }
 
         isTesting = true
@@ -253,7 +282,7 @@ class ConfigurationViewModel: ObservableObject {
                     self.isTesting = false
                     self.testResult = true
                     self.testMessage = "\(libraries.count) libraries found"
-                    self.discoveredLibraries = libraries
+                    self.discoveredLibraries = libraries.map { $0.toMediaLibrary() }
 
                     if self.selectedLibraryIds.isEmpty {
                         self.selectedLibraryIds = Set(libraries.map { $0.key })
@@ -264,6 +293,90 @@ class ConfigurationViewModel: ObservableObject {
                     self.isTesting = false
                     self.testResult = false
                     self.testMessage = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    // MARK: - Jellyfin Connection
+
+    func connectToJellyfin() {
+        guard !jellyfinServerURL.isEmpty, !jellyfinUsername.isEmpty, !jellyfinPassword.isEmpty else {
+            jellyfinStatus = "Please fill in all fields"
+            return
+        }
+
+        isJellyfinConnecting = true
+        jellyfinStatus = "Connecting..."
+
+        Task {
+            do {
+                let auth = JellyfinAuth()
+                let result = try await auth.authenticate(
+                    serverURL: jellyfinServerURL,
+                    username: jellyfinUsername,
+                    password: jellyfinPassword
+                )
+
+                await MainActor.run {
+                    Preferences.jellyfinServerURL = jellyfinServerURL
+                    Preferences.jellyfinUsername = jellyfinUsername
+                    Preferences.jellyfinAccessToken = result.accessToken
+                    Preferences.jellyfinUserId = result.userId
+                    isJellyfinConnected = true
+                    isJellyfinConnecting = false
+                    jellyfinStatus = "Connected"
+                    jellyfinPassword = ""  // Clear password from memory
+                    testJellyfinConnection()
+                }
+            } catch {
+                await MainActor.run {
+                    isJellyfinConnecting = false
+                    jellyfinStatus = "Failed: \(error.localizedDescription)"
+                }
+            }
+        }
+    }
+
+    func disconnectJellyfin() {
+        Preferences.jellyfinAccessToken = ""
+        Preferences.jellyfinUserId = ""
+        isJellyfinConnected = false
+        jellyfinStatus = ""
+        discoveredLibraries = []
+    }
+
+    func testJellyfinConnection() {
+        let serverURL = Preferences.jellyfinServerURL
+        let token = Preferences.jellyfinAccessToken
+        let userId = Preferences.jellyfinUserId
+
+        guard !serverURL.isEmpty, !token.isEmpty, !userId.isEmpty else { return }
+
+        isTesting = true
+        testResult = nil
+        testMessage = ""
+
+        Task {
+            do {
+                let provider = JellyfinProvider(serverURL: serverURL, accessToken: token, userId: userId)
+                let libraries = try await provider.fetchLibraries()
+
+                await MainActor.run {
+                    discoveredLibraries = libraries
+                    isTesting = false
+                    testResult = true
+                    testMessage = "Connected — \(libraries.count) libraries found"
+
+                    if selectedLibraryIds.isEmpty {
+                        selectedLibraryIds = Set(libraries.map { $0.id })
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    isTesting = false
+                    testResult = false
+                    testMessage = error.localizedDescription
                 }
             }
         }
