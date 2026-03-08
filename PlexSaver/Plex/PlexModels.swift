@@ -37,6 +37,7 @@ struct PlexMediaItem: Decodable {
     let ratingKey: String
     let title: String
     let type: String?
+    let year: Int?
     let thumb: String?
     let art: String?
     let parentThumb: String?
