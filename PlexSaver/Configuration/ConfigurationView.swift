@@ -9,21 +9,47 @@ struct ConfigurationView: View {
     @StateObject private var viewModel = ConfigurationViewModel()
     var onClose: (() -> Void)?
 
+    private var isConnected: Bool {
+        (viewModel.providerType == .plex && viewModel.isSignedIn)
+            || (viewModel.providerType == .jellyfin && viewModel.isJellyfinConnected)
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
+                    // Provider picker
+                    Picker("Media Server", selection: $viewModel.providerType) {
+                        ForEach(ProviderType.allCases, id: \.self) { type in
+                            Text(type.displayName).tag(type)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .padding(.bottom, 4)
+
                     // Plex Account
-                    sectionHeader("Plex Account")
-                    if viewModel.isSignedIn {
-                        signedInView
-                    } else if !viewModel.discoveredServers.isEmpty {
-                        serverPickerView
-                    } else {
-                        signInView
+                    if viewModel.providerType == .plex {
+                        sectionHeader("Plex Account")
+                        if viewModel.isSignedIn {
+                            signedInView
+                        } else if !viewModel.discoveredServers.isEmpty {
+                            serverPickerView
+                        } else {
+                            signInView
+                        }
                     }
 
-                    if viewModel.isSignedIn {
+                    // Jellyfin Server
+                    if viewModel.providerType == .jellyfin {
+                        sectionHeader("Jellyfin Server")
+                        if viewModel.isJellyfinConnected {
+                            jellyfinConnectedView
+                        } else {
+                            jellyfinLoginView
+                        }
+                    }
+
+                    if isConnected {
                         if let result = viewModel.testResult {
                             connectionView(result: result)
                         }
@@ -239,14 +265,69 @@ struct ConfigurationView: View {
                 .foregroundColor(.secondary)
 
             ForEach(viewModel.discoveredLibraries) { library in
-                Toggle(isOn: viewModel.libraryBinding(for: library.key)) {
+                Toggle(isOn: viewModel.libraryBinding(for: library.id)) {
                     HStack {
-                        Text(library.title)
+                        Text(library.name)
                         Text("(\(library.type))")
                             .foregroundColor(.secondary)
                             .font(.caption)
                     }
                 }
+            }
+        }
+    }
+
+    // MARK: - Jellyfin Subviews
+
+    private var jellyfinLoginView: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            TextField("Server URL", text: $viewModel.jellyfinServerURL)
+                .textFieldStyle(.roundedBorder)
+                .help("e.g. http://jellyfin.local:8096")
+
+            TextField("Username", text: $viewModel.jellyfinUsername)
+                .textFieldStyle(.roundedBorder)
+
+            SecureField("Password", text: $viewModel.jellyfinPassword)
+                .textFieldStyle(.roundedBorder)
+
+            HStack {
+                Button("Connect") {
+                    viewModel.connectToJellyfin()
+                }
+                .disabled(viewModel.isJellyfinConnecting
+                    || viewModel.jellyfinServerURL.isEmpty
+                    || viewModel.jellyfinUsername.isEmpty
+                    || viewModel.jellyfinPassword.isEmpty)
+
+                if viewModel.isJellyfinConnecting {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+
+                if !viewModel.jellyfinStatus.isEmpty {
+                    Text(viewModel.jellyfinStatus)
+                        .font(.caption)
+                        .foregroundColor(viewModel.isJellyfinConnected ? .green : .red)
+                }
+            }
+        }
+    }
+
+    private var jellyfinConnectedView: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundColor(.green)
+                Text(viewModel.jellyfinServerURL)
+                    .font(.caption)
+                Text("(\(viewModel.jellyfinUsername))")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            Button("Disconnect") {
+                viewModel.disconnectJellyfin()
             }
         }
     }
