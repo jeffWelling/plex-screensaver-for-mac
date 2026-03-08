@@ -16,7 +16,7 @@ class GridCell {
     private let titleLayer = CATextLayer()
     private var activeLayerIsFirst = true
     private var hasDisplayedFirstImage = false
-    private(set) var currentTitle: String?
+    private var currentTitle: String?
 
     let row: Int
     let column: Int
@@ -77,15 +77,7 @@ class GridCell {
         CATransaction.commit()
     }
 
-    /// Hide the title overlay with a fade-out animation.
-    func hideTitle(fadeDuration: CFTimeInterval = 0.3) {
-        CATransaction.begin()
-        CATransaction.setAnimationDuration(fadeDuration)
-        titleLayer.opacity = 0
-        CATransaction.commit()
 
-        currentTitle = nil
-    }
 
     /// Display a new image with a crossfade transition.
     func displayImage(_ image: NSImage, transitionDuration: CFTimeInterval = 1.0) {

@@ -26,7 +26,7 @@ class GridManager {
         self.columns = max(1, columns)
         self.rotationInterval = rotationInterval
         self.showTitleReveal = showTitleReveal
-        self.titleDisplayDuration = min(titleDisplayDuration, rotationInterval - 1.0)
+        self.titleDisplayDuration = max(0.5, min(titleDisplayDuration, rotationInterval - crossfadeDuration))
 
         rootLayer.frame = frame
         rootLayer.backgroundColor = CGColor.black
