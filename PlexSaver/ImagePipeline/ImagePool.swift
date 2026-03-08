@@ -13,14 +13,14 @@ struct ImageWithMetadata {
 }
 
 actor ImagePool {
-    private let client: PlexClient
+    private let provider: any MediaProvider
     private let imageSource: ImageSourceType
     private let cellWidth: Int
     private let cellHeight: Int
     private let cache: ImageCache
     private let diskCache: DiskCache?
 
-    private var mediaItems: [PlexMediaItem] = []
+    private var mediaItems: [MediaItem] = []
     private var shuffledIndices: [Int] = []
     private var currentIndex = 0
     private var pool: [ImageWithMetadata] = []
@@ -28,8 +28,8 @@ actor ImagePool {
     private var isRefilling = false
     private var isStopped = false
 
-    init(client: PlexClient, imageSource: ImageSourceType, cellWidth: Int, cellHeight: Int, poolSize: Int, diskCache: DiskCache? = nil) {
-        self.client = client
+    init(provider: any MediaProvider, imageSource: ImageSourceType, cellWidth: Int, cellHeight: Int, poolSize: Int, diskCache: DiskCache? = nil) {
+        self.provider = provider
         self.imageSource = imageSource
         self.cellWidth = cellWidth
         self.cellHeight = cellHeight
@@ -41,18 +41,18 @@ actor ImagePool {
     /// Load media items from configured libraries. Returns count of items with art.
     @discardableResult
     func loadMediaItems(libraryIds: [String]) async -> Int {
-        var allItems: [PlexMediaItem] = []
+        var allItems: [MediaItem] = []
         do {
             if libraryIds.isEmpty {
                 // Fetch all libraries
-                let libraries = try await client.fetchLibraries()
+                let libraries = try await provider.fetchLibraries()
                 for library in libraries {
-                    let items = try await client.fetchAllItems(sectionId: library.key)
+                    let items = try await provider.fetchItems(libraryId: library.id)
                     allItems.append(contentsOf: items)
                 }
             } else {
                 for id in libraryIds {
-                    let items = try await client.fetchAllItems(sectionId: id)
+                    let items = try await provider.fetchItems(libraryId: id)
                     allItems.append(contentsOf: items)
                 }
             }
@@ -112,7 +112,7 @@ actor ImagePool {
         currentIndex = 0
     }
 
-    private func nextMediaItem() -> PlexMediaItem? {
+    private func nextMediaItem() -> MediaItem? {
         guard !mediaItems.isEmpty else { return nil }
 
         if currentIndex >= shuffledIndices.count {
@@ -143,7 +143,7 @@ actor ImagePool {
 
         // 3. Fetch from network, write-through to both caches
         do {
-            let image = try await client.fetchImage(imagePath: artPath, width: cellWidth, height: cellHeight)
+            let image = try await provider.fetchImage(path: artPath, width: cellWidth, height: cellHeight)
             cache.set(artPath, image: image)
             if let disk = diskCache {
                 await disk.store(artPath, image: image)
