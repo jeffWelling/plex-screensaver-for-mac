@@ -1,8 +1,8 @@
 //
-//  PlexSaverView.swift
+//  MontageView.swift
 //  PlexSaver
 //
-//  Main ScreenSaverView subclass — integrates grid, Plex API, and image pipeline.
+//  Main ScreenSaverView subclass — integrates grid, media API, and image pipeline.
 //  Two-phase startup: instant display from disk cache, then background network fetch.
 //
 
@@ -10,7 +10,7 @@ import ScreenSaver
 import AppKit
 import os.log
 
-class PlexSaverView: ScreenSaverView {
+class MontageView: ScreenSaverView {
 
     lazy var configSheetController: ConfigureSheetController = ConfigureSheetController()
 
@@ -68,7 +68,7 @@ class PlexSaverView: ScreenSaverView {
 
         // Listen for config changes so we can restart the pipeline
         configCloseObserver = NotificationCenter.default.addObserver(
-            forName: .plexSaverConfigChanged,
+            forName: .montageConfigChanged,
             object: nil,
             queue: .main
         ) { [weak self] _ in
@@ -255,7 +255,7 @@ class PlexSaverView: ScreenSaverView {
     private func showVersionOverlay() {
         guard let rootLayer = self.layer else { return }
 
-        let bundle = Bundle(for: PlexSaverView.self)
+        let bundle = Bundle(for: MontageView.self)
         let version = bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
         let build = bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"
 
@@ -568,5 +568,5 @@ class PlexSaverView: ScreenSaverView {
 // MARK: - Notification
 
 extension Notification.Name {
-    static let plexSaverConfigChanged = Notification.Name("PlexSaverConfigChanged")
+    static let montageConfigChanged = Notification.Name("MontageConfigChanged")
 }

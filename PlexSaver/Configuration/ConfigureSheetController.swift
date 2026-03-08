@@ -44,6 +44,6 @@ class ConfigureSheetController: NSObject {
 extension ConfigureSheetController: NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         OSLog.info("Configuration window closing — notifying screensaver to reload")
-        NotificationCenter.default.post(name: .plexSaverConfigChanged, object: nil)
+        NotificationCenter.default.post(name: .montageConfigChanged, object: nil)
     }
 }

@@ -1,15 +1,15 @@
 //
-//  SaverTestContentView.swift
+//  MontageTestContentView.swift
 //  SaverTest
 //
 
 import SwiftUI
 
-struct SaverTestContentView: View {
+struct MontageTestContentView: View {
     private let configSheetController = ConfigureSheetController()
 
     var body: some View {
-        ScreenSaverRepresentable()
+        MontageRepresentable()
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     Button("Preferences") {

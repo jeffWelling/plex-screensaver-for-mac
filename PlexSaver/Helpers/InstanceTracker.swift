@@ -15,7 +15,7 @@ class InstanceTracker {
 
     private init() {}
 
-    func registerInstance(_ instance: PlexSaverView) -> Int {
+    func registerInstance(_ instance: MontageView) -> Int {
         return queue.sync {
             instanceCounter += 1
             instances[instanceCounter] = WeakRef(instance)
@@ -32,9 +32,9 @@ class InstanceTracker {
 }
 
 private class WeakRef {
-    weak var value: PlexSaverView?
+    weak var value: MontageView?
 
-    init(_ value: PlexSaverView) {
+    init(_ value: MontageView) {
         self.value = value
     }
 }

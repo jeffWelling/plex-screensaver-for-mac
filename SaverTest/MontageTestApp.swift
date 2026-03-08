@@ -1,19 +1,19 @@
 //
-//  SaverTestApp.swift
+//  MontageTestApp.swift
 //  SaverTest
 //
 
 import SwiftUI
 
 @main
-struct SaverTestApp: App {
+struct MontageTestApp: App {
     init() {
         InstanceTracker.isRunningInApp = true
     }
 
     var body: some Scene {
         WindowGroup {
-            SaverTestContentView()
+            MontageTestContentView()
         }
         .defaultSize(width: 1280, height: 720)
     }
