@@ -6,6 +6,12 @@
 import AppKit
 import os.log
 
+struct ImageWithMetadata {
+    let image: NSImage
+    let title: String
+    let year: Int?
+}
+
 actor ImagePool {
     private let client: PlexClient
     private let imageSource: ImageSourceType
@@ -17,7 +23,7 @@ actor ImagePool {
     private var mediaItems: [PlexMediaItem] = []
     private var shuffledIndices: [Int] = []
     private var currentIndex = 0
-    private var pool: [NSImage] = []
+    private var pool: [ImageWithMetadata] = []
     private let poolSize: Int
     private var isRefilling = false
     private var isStopped = false
@@ -70,8 +76,8 @@ actor ImagePool {
 
         for _ in 0..<poolSize {
             if isStopped { break }
-            if let image = await fetchNextImage() {
-                pool.append(image)
+            if let item = await fetchNextImage() {
+                pool.append(item)
             }
         }
 
@@ -80,16 +86,16 @@ actor ImagePool {
     }
 
     /// Take an image from the pool. Returns nil if pool is empty.
-    func takeImage() -> NSImage? {
+    func takeImage() -> ImageWithMetadata? {
         guard !pool.isEmpty else { return nil }
-        let image = pool.removeFirst()
+        let item = pool.removeFirst()
 
         // Trigger background refill if pool is getting low
         if pool.count < poolSize / 2 && !isRefilling {
             Task { await refillPool() }
         }
 
-        return image
+        return item
     }
 
     /// Stop all background activity.
@@ -118,7 +124,7 @@ actor ImagePool {
         return item
     }
 
-    private func fetchNextImage() async -> NSImage? {
+    private func fetchNextImage() async -> ImageWithMetadata? {
         guard let item = nextMediaItem(),
               let artPath = item.artPath(for: imageSource) else {
             return nil
@@ -126,13 +132,13 @@ actor ImagePool {
 
         // 1. Check in-memory cache
         if let cached = cache.get(artPath) {
-            return cached
+            return ImageWithMetadata(image: cached, title: item.title, year: item.year)
         }
 
         // 2. Check disk cache
         if let disk = diskCache, let cached = await disk.get(artPath) {
             cache.set(artPath, image: cached)
-            return cached
+            return ImageWithMetadata(image: cached, title: item.title, year: item.year)
         }
 
         // 3. Fetch from network, write-through to both caches
@@ -142,7 +148,7 @@ actor ImagePool {
             if let disk = diskCache {
                 await disk.store(artPath, image: image)
             }
-            return image
+            return ImageWithMetadata(image: image, title: item.title, year: item.year)
         } catch {
             OSLog.info("ImagePool: Failed to fetch image for \(item.title): \(error.localizedDescription)")
             return nil
@@ -155,8 +161,8 @@ actor ImagePool {
         defer { isRefilling = false }
 
         while pool.count < poolSize && !isStopped {
-            if let image = await fetchNextImage() {
-                pool.append(image)
+            if let item = await fetchNextImage() {
+                pool.append(item)
             } else {
                 // Skip failed fetches but don't retry endlessly
                 break
