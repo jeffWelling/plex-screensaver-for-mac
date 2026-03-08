@@ -57,7 +57,7 @@ actor PlexAuth {
         return newID
     }()
 
-    private static let productName = "PlexSaver"
+    private static let productName = "Montage"
     private let session: URLSession
 
     init() {

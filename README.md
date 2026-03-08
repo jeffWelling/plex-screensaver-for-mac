@@ -1,8 +1,8 @@
-# PlexSaver
+# Montage
 
-A macOS screensaver that connects to your Plex Media Server and displays a rotating mosaic of media artwork — the "guess the movie" experience.
+A macOS screensaver that connects to your media server and displays a rotating mosaic of media artwork — the "guess the movie" experience. Currently supports Plex Media Server.
 
-![PlexSaver in action](docs/screenshots/screensaver.png)
+![Montage in action](docs/screenshots/screensaver.png)
 
 ## Features
 
@@ -13,7 +13,7 @@ A macOS screensaver that connects to your Plex Media Server and displays a rotat
 - **Multiple image sources** — fanart, posters, or mixed
 - **Library selection** — choose which Plex libraries to display
 - **Persistent image cache** — instant startup from disk cache, no waiting
-- **Offline mode** — shows cached images when Plex is unreachable
+- **Offline mode** — shows cached images when server is unreachable
 
 ## Screenshots
 
@@ -25,9 +25,9 @@ A macOS screensaver that connects to your Plex Media Server and displays a rotat
 
 ### From Release
 
-1. Download `PlexSaver.saver.zip` from [Releases](https://github.com/jeffWelling/plex-screensaver-for-mac/releases)
-2. Unzip and double-click `PlexSaver.saver` to install
-3. Open **System Settings → Screen Saver** and select PlexSaver
+1. Download `Montage.saver.zip` from [Releases](https://github.com/jeffWelling/plex-screensaver-for-mac/releases)
+2. Unzip and double-click `Montage.saver` to install
+3. Open **System Settings → Screen Saver** and select Montage
 4. Click **Options...** to sign in with Plex and configure the grid
 
 ### Build from Source
@@ -42,7 +42,7 @@ cd plex-screensaver-for-mac
 xcodebuild -scheme PlexSaver -configuration Release build
 
 # Install it
-cp -R ~/Library/Developer/Xcode/DerivedData/PlexSaver-*/Build/Products/Release/PlexSaver.saver ~/Library/Screen\ Savers/
+cp -R ~/Library/Developer/Xcode/DerivedData/PlexSaver-*/Build/Products/Release/PlexSaver.saver ~/Library/Screen\ Savers/Montage.saver
 ```
 
 ## Development
@@ -59,7 +59,7 @@ Or open `PlexSaver.xcodeproj` in Xcode, select the SaverTest scheme, and hit Run
 ### Viewing Logs
 
 ```bash
-log stream --predicate 'subsystem CONTAINS "PlexSaver" OR subsystem CONTAINS "SaverTest"' --level debug
+log stream --predicate 'subsystem CONTAINS "montage" OR subsystem CONTAINS "Montage"' --level debug
 ```
 
 ## Configuration
@@ -74,13 +74,13 @@ log stream --predicate 'subsystem CONTAINS "PlexSaver" OR subsystem CONTAINS "Sa
 
 ## How It Works
 
-PlexSaver uses a two-phase startup to eliminate cold-start delays:
+Montage uses a two-phase startup to eliminate cold-start delays:
 
-**Phase 1 — Instant (disk cache):** On launch, the screensaver checks `~/Library/Caches/com.plexsaver.PlexSaver/` for previously cached images. If found, the grid is filled immediately and rotation begins while a small "Connecting to Plex..." status appears at the bottom.
+**Phase 1 — Instant (disk cache):** On launch, the screensaver checks `~/Library/Caches/com.montage.Montage/` for previously cached images. If found, the grid is filled immediately and rotation begins while a small "Connecting..." status appears at the bottom.
 
-**Phase 2 — Background (network):** A Plex API connection is established in the background. Once the image pool is filled from the network, it seamlessly takes over rotation from the cached images. New images are written through to the disk cache for next time.
+**Phase 2 — Background (network):** A media server connection is established in the background. Once the image pool is filled from the network, it seamlessly takes over rotation from the cached images. New images are written through to the disk cache for next time.
 
-If Plex is unreachable and cached images exist, the screensaver continues showing them with a brief "Offline" notice. If no cache exists and no connection can be made, an error message is displayed.
+If the server is unreachable and cached images exist, the screensaver continues showing them with a brief "Offline" notice. If no cache exists and no connection can be made, an error message is displayed.
 
 ### Architecture
 
@@ -94,16 +94,16 @@ If Plex is unreachable and cached images exist, the screensaver continues showin
 ## Troubleshooting
 
 **Screensaver shows "No server configured"**
-Open System Settings → Screen Saver → PlexSaver → Options and sign in with your Plex account.
+Open System Settings → Screen Saver → Montage → Options and sign in with your Plex account.
 
 **Images don't load / "Could not load media"**
 Verify your Plex server is running and accessible from this Mac. Check that at least one library has media with artwork.
 
 **Screensaver doesn't appear in System Settings**
-Ensure `PlexSaver.saver` is in `~/Library/Screen Savers/`. Try removing and re-adding it.
+Ensure `Montage.saver` is in `~/Library/Screen Savers/`. Try removing and re-adding it.
 
 **Cache issues**
-Clear the disk cache by deleting `~/Library/Caches/com.plexsaver.PlexSaver/`. The screensaver will rebuild it on next launch.
+Clear the disk cache by deleting `~/Library/Caches/com.montage.Montage/`. The screensaver will rebuild it on next launch.
 
 ## License
 
