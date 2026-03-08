@@ -8,12 +8,10 @@ import AppKit
 /// MediaProvider implementation for Jellyfin servers
 actor JellyfinProvider: MediaProvider {
     private let client: JellyfinClient
-    private let jellyfinServerURL: String
 
     nonisolated let serverName: String = "Jellyfin Server"
 
     init(serverURL: String, accessToken: String, userId: String) {
-        self.jellyfinServerURL = serverURL
         self.client = JellyfinClient(serverURL: serverURL, accessToken: accessToken, userId: userId)
     }
 

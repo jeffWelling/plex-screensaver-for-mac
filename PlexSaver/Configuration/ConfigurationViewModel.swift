@@ -198,7 +198,14 @@ class ConfigurationViewModel: ObservableObject {
     private func setupBindings() {
         $providerType
             .dropFirst()
-            .sink { Preferences.providerType = $0 }
+            .sink { [weak self] newType in
+                Preferences.providerType = newType
+                self?.discoveredLibraries = []
+                self?.selectedLibraryIds = []
+                Preferences.selectedLibraryIds = []
+                self?.testResult = nil
+                self?.testMessage = ""
+            }
             .store(in: &cancellables)
 
         $plexServerURL

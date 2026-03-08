@@ -22,9 +22,3 @@ protocol MediaProvider: Actor {
     /// Test connectivity to the server
     func testConnection() async throws -> Bool
 }
-
-/// Protocol for provider-specific authentication flows
-protocol MediaAuthenticator {
-    /// The provider type this authenticator handles
-    var providerType: ProviderType { get }
-}

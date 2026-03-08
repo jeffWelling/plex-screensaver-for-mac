@@ -34,7 +34,7 @@ actor JellyfinClient {
 
     /// Fetch all media items in a library
     func fetchAllItems(libraryId: String) async throws -> [JellyfinItem] {
-        let path = "/Users/\(userId)/Items?ParentId=\(libraryId)&Recursive=true&IncludeItemTypes=Movie,Series,MusicAlbum&Fields=PrimaryImageAspectRatio"
+        let path = "/Users/\(userId)/Items?ParentId=\(libraryId)&Recursive=true&IncludeItemTypes=Movie,Series,MusicAlbum&Fields=PrimaryImageAspectRatio&Limit=0"
         let data = try await request(path: path)
         let response = try JSONDecoder().decode(JellyfinItemsResponse.self, from: data)
         return response.items

@@ -9,7 +9,7 @@ class InstanceTracker {
     static let shared = InstanceTracker()
     static var isRunningInApp: Bool = false
 
-    private let queue = DispatchQueue(label: "plexsaver.instance.tracker", qos: .utility)
+    private let queue = DispatchQueue(label: "montage.instance.tracker", qos: .utility)
     private var instanceCounter = 0
     private var instances: [Int: WeakRef] = [:]
 

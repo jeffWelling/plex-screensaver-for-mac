@@ -1,17 +1,18 @@
 # Montage
 
-A macOS screensaver that connects to your media server and displays a rotating mosaic of media artwork — the "guess the movie" experience. Currently supports Plex Media Server.
+A macOS screensaver that connects to your Plex or Jellyfin media server and displays a rotating mosaic of media artwork — the "guess the movie" experience.
 
 ![Montage in action](docs/screenshots/screensaver.png)
 
 ## Features
 
 - **Plex OAuth sign-in** — browser-based authentication, no manual token
+- **Jellyfin support** — username/password authentication to any Jellyfin server
 - **Server auto-discovery** — finds your Plex servers after sign-in
 - **Configurable grid** — adjustable rows, columns, and rotation interval
 - **Crossfade transitions** — smooth per-cell staggered image swaps
 - **Multiple image sources** — fanart, posters, or mixed
-- **Library selection** — choose which Plex libraries to display
+- **Library selection** — choose which libraries to display from either provider
 - **Persistent image cache** — instant startup from disk cache, no waiting
 - **Offline mode** — shows cached images when server is unreachable
 
@@ -28,7 +29,7 @@ A macOS screensaver that connects to your media server and displays a rotating m
 1. Download `Montage.saver.zip` from [Releases](https://github.com/jeffWelling/plex-screensaver-for-mac/releases)
 2. Unzip and double-click `Montage.saver` to install
 3. Open **System Settings → Screen Saver** and select Montage
-4. Click **Options...** to sign in with Plex and configure the grid
+4. Click **Options...** to sign in with Plex or Jellyfin and configure the grid
 
 ### Build from Source
 
@@ -70,7 +71,12 @@ log stream --predicate 'subsystem CONTAINS "montage" OR subsystem CONTAINS "Mont
 | Grid Columns | 4 | Number of columns in the image grid |
 | Rotation Interval | 5s | Seconds between image transitions per cell |
 | Image Source | Fanart | Fanart (16:9 backgrounds), Posters (2:3), or Mixed |
-| Libraries | All | Which Plex libraries to pull images from |
+| Provider | Plex | Plex or Jellyfin media server |
+| Libraries | All | Which libraries to pull images from |
+
+### Jellyfin Setup
+
+Select **Jellyfin** from the provider picker in the preferences panel. Enter your server URL (e.g., `http://192.168.1.50:8096`), username, and password, then click **Connect**. The password is used only for initial authentication and is not stored — Montage saves the access token for subsequent sessions.
 
 ## How It Works
 
@@ -78,7 +84,7 @@ Montage uses a two-phase startup to eliminate cold-start delays:
 
 **Phase 1 — Instant (disk cache):** On launch, the screensaver checks `~/Library/Caches/com.montage.Montage/` for previously cached images. If found, the grid is filled immediately and rotation begins while a small "Connecting..." status appears at the bottom.
 
-**Phase 2 — Background (network):** A media server connection is established in the background. Once the image pool is filled from the network, it seamlessly takes over rotation from the cached images. New images are written through to the disk cache for next time.
+**Phase 2 — Background (network):** A connection to the configured media server (Plex or Jellyfin) is established in the background. Once the image pool is filled from the network, it seamlessly takes over rotation from the cached images. New images are written through to the disk cache for next time.
 
 If the server is unreachable and cached images exist, the screensaver continues showing them with a brief "Offline" notice. If no cache exists and no connection can be made, an error message is displayed.
 
@@ -86,18 +92,19 @@ If the server is unreachable and cached images exist, the screensaver continues 
 
 - `ScreenSaverView` subclass with `CALayer`-based grid rendering
 - Dual-layer crossfade pattern per cell (GPU-accelerated)
+- `MediaProvider` protocol with `PlexProvider` and `JellyfinProvider` implementations
 - Actor-based `ImagePool` with three cache tiers: in-memory → disk → network
 - `DiskCache` actor with JPEG persistence, LRU eviction, and config validation
-- Plex API via async/await `URLSession`
+- Plex and Jellyfin APIs via async/await `URLSession`
 - SwiftUI configuration sheet hosted in `NSHostingController`
 
 ## Troubleshooting
 
 **Screensaver shows "No server configured"**
-Open System Settings → Screen Saver → Montage → Options and sign in with your Plex account.
+Open System Settings → Screen Saver → Montage → Options and sign in with your Plex or Jellyfin account.
 
 **Images don't load / "Could not load media"**
-Verify your Plex server is running and accessible from this Mac. Check that at least one library has media with artwork.
+Verify your media server is running and accessible from this Mac. Check that at least one library has media with artwork.
 
 **Screensaver doesn't appear in System Settings**
 Ensure `Montage.saver` is in `~/Library/Screen Savers/`. Try removing and re-adding it.
