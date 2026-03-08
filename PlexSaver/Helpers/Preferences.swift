@@ -44,6 +44,12 @@ struct Preferences {
 
     @Storage(key: "SelectedLibraryIds", defaultValue: [])
     static var selectedLibraryIds: [String]
+
+    @SimpleStorage(key: "ShowTitleReveal", defaultValue: true)
+    static var showTitleReveal: Bool
+
+    @SimpleStorage(key: "TitleDisplayDuration", defaultValue: 2.0)
+    static var titleDisplayDuration: Double
 }
 
 // MARK: - Property Wrappers
