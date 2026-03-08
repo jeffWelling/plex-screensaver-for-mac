@@ -10,9 +10,7 @@ actor JellyfinProvider: MediaProvider {
     private let client: JellyfinClient
     private let jellyfinServerURL: String
 
-    var serverName: String {
-        get async { "Jellyfin Server" }
-    }
+    nonisolated let serverName: String = "Jellyfin Server"
 
     init(serverURL: String, accessToken: String, userId: String) {
         self.jellyfinServerURL = serverURL

@@ -50,6 +50,25 @@ struct Preferences {
 
     @SimpleStorage(key: "TitleDisplayDuration", defaultValue: 2.0)
     static var titleDisplayDuration: Double
+
+    // MARK: - Provider Selection
+
+    @Storage(key: "ProviderType", defaultValue: .plex)
+    static var providerType: ProviderType
+
+    // MARK: - Jellyfin Settings
+
+    @SimpleStorage(key: "JellyfinServerURL", defaultValue: "")
+    static var jellyfinServerURL: String
+
+    @SimpleStorage(key: "JellyfinUsername", defaultValue: "")
+    static var jellyfinUsername: String
+
+    @SimpleStorage(key: "JellyfinAccessToken", defaultValue: "")
+    static var jellyfinAccessToken: String
+
+    @SimpleStorage(key: "JellyfinUserId", defaultValue: "")
+    static var jellyfinUserId: String
 }
 
 // MARK: - Property Wrappers

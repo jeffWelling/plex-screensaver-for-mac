@@ -34,6 +34,7 @@
 		BB0000042E38FF3900C4EA3C /* Configuration */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = Configuration; sourceTree = "<group>"; };
 		BB0000052E38FF4C00C4EA3C /* Helpers */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = Helpers; sourceTree = "<group>"; };
 		BB0000062E39000000C4EA3C /* Providers */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = Providers; sourceTree = "<group>"; };
+		BB0000072E39010000C4EA3C /* Jellyfin */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = Jellyfin; sourceTree = "<group>"; };
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -68,6 +69,7 @@
 			children = (
 				BB0000012E38FF3900C4EA3C /* Grid */,
 				BB0000022E38FF3900C4EA3C /* Plex */,
+				BB0000072E39010000C4EA3C /* Jellyfin */,
 				BB0000062E39000000C4EA3C /* Providers */,
 				BB0000032E38FF3900C4EA3C /* ImagePipeline */,
 				BB0000042E38FF3900C4EA3C /* Configuration */,
@@ -136,6 +138,7 @@
 			fileSystemSynchronizedGroups = (
 				BB0000012E38FF3900C4EA3C /* Grid */,
 				BB0000022E38FF3900C4EA3C /* Plex */,
+				BB0000072E39010000C4EA3C /* Jellyfin */,
 				BB0000062E39000000C4EA3C /* Providers */,
 				BB0000032E38FF3900C4EA3C /* ImagePipeline */,
 				BB0000042E38FF3900C4EA3C /* Configuration */,
@@ -161,6 +164,7 @@
 			fileSystemSynchronizedGroups = (
 				BB0000012E38FF3900C4EA3C /* Grid */,
 				BB0000022E38FF3900C4EA3C /* Plex */,
+				BB0000072E39010000C4EA3C /* Jellyfin */,
 				BB0000062E39000000C4EA3C /* Providers */,
 				BB0000032E38FF3900C4EA3C /* ImagePipeline */,
 				BB0000042E38FF3900C4EA3C /* Configuration */,

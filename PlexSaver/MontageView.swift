@@ -326,14 +326,38 @@ class MontageView: ScreenSaverView {
     // MARK: - Two-Phase Startup
 
     private func startImagePipeline() {
-        let serverURL = Preferences.plexServerURL
-        let token = Preferences.plexToken
+        let providerType = Preferences.providerType
 
-        guard !serverURL.isEmpty, !token.isEmpty else {
-            OSLog.info("startImagePipeline (\(instanceNumber)): no server configured")
-            showStatus("No server configured\nOpen Options to sign in with Plex", position: .centered)
-            return
+        // Build the appropriate provider based on user selection
+        let provider: any MediaProvider
+        let serverURL: String
+
+        switch providerType {
+        case .plex:
+            let url = Preferences.plexServerURL
+            let token = Preferences.plexToken
+            guard !url.isEmpty, !token.isEmpty else {
+                OSLog.info("startImagePipeline (\(instanceNumber)): no Plex server configured")
+                showStatus("No server configured\nOpen Options to sign in with Plex", position: .centered)
+                return
+            }
+            serverURL = url
+            provider = PlexProvider(serverURL: url, token: token)
+
+        case .jellyfin:
+            let url = Preferences.jellyfinServerURL
+            let token = Preferences.jellyfinAccessToken
+            let userId = Preferences.jellyfinUserId
+            guard !url.isEmpty, !token.isEmpty, !userId.isEmpty else {
+                OSLog.info("startImagePipeline (\(instanceNumber)): no Jellyfin server configured")
+                showStatus("No server configured\nOpen Options to sign in with Jellyfin", position: .centered)
+                return
+            }
+            serverURL = url
+            provider = JellyfinProvider(serverURL: url, accessToken: token, userId: userId)
         }
+
+        let providerName = providerType.displayName
 
         // Reuse existing disk cache or create a new one
         let cache: DiskCache
@@ -361,33 +385,32 @@ class MontageView: ScreenSaverView {
                         self.fillGridWithCachedImages()
                         self.fadeInGrid()
                         self.startCachedRotation()
-                        self.showStatus("Connecting to Plex...", position: .bottom)
+                        self.showStatus("Connecting to \(providerName)...", position: .bottom)
                     }
                 } else {
                     await MainActor.run {
-                        self.showStatus("Connecting to Plex server...", position: .centered)
+                        self.showStatus("Connecting to \(providerName) server...", position: .centered)
                     }
                 }
             } else {
                 await MainActor.run {
-                    self.showStatus("Connecting to Plex server...", position: .centered)
+                    self.showStatus("Connecting to \(providerName) server...", position: .centered)
                 }
             }
 
-            // Phase 2: Connect to Plex in background
-            await self.startNetworkPhase(serverURL: serverURL, token: token, cache: cache)
+            // Phase 2: Connect to media server in background
+            await self.startNetworkPhase(provider: provider, providerName: providerName, cache: cache)
         }
     }
 
-    private func startNetworkPhase(serverURL: String, token: String, cache: DiskCache) async {
-        let client = PlexClient(serverURL: serverURL, token: token)
+    private func startNetworkPhase(provider: any MediaProvider, providerName: String, cache: DiskCache) async {
         let cellW = Int(gridManager?.cellWidth ?? 480)
         let cellH = Int(gridManager?.cellHeight ?? 270)
         let totalCells = (gridManager?.cells.count ?? 12)
         let poolSize = totalCells * 3
 
         let pool = ImagePool(
-            client: client,
+            provider: provider,
             imageSource: Preferences.imageSource,
             cellWidth: cellW,
             cellHeight: cellH,
@@ -409,7 +432,7 @@ class MontageView: ScreenSaverView {
                     self.showStatus("Offline — showing cached images", position: .bottom)
                     self.fadeOutStatus(delay: 3.0)
                 } else {
-                    self.showStatus("Could not load media from Plex\nCheck connection and try again", position: .centered)
+                    self.showStatus("Could not load media from \(providerName)\nCheck connection and try again", position: .centered)
                     OSLog.info("startImagePipeline (\(self.instanceNumber)): no media items loaded")
                 }
             }
@@ -431,7 +454,7 @@ class MontageView: ScreenSaverView {
                     self.showStatus("Offline — showing cached images", position: .bottom)
                     self.fadeOutStatus(delay: 3.0)
                 } else {
-                    self.showStatus("Could not fetch images from Plex\nCheck server connection", position: .centered)
+                    self.showStatus("Could not fetch images from \(providerName)\nCheck server connection", position: .centered)
                     OSLog.info("startImagePipeline (\(self.instanceNumber)): prefill returned 0 images")
                 }
                 return
