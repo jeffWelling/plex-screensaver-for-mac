@@ -20,13 +20,16 @@ actor DiskCache {
     /// Default max cache size: 1 GB
     static let defaultMaxSize = 1_073_741_824
 
+    /// Cache entries older than this are evicted on load (7 days).
+    static let maxAge: TimeInterval = 7 * 24 * 60 * 60
+
     init(maxSize: Int = DiskCache.defaultMaxSize) {
-        let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
             .appendingPathComponent("com.montage.Montage", isDirectory: true)
         self.cacheDirectory = base.appendingPathComponent("images", isDirectory: true)
         self.manifestURL = base.appendingPathComponent("manifest.json")
         self.maxSizeBytes = maxSize
-        self.manifest = CacheManifest(serverURL: "", imageSource: "", entries: [], totalSize: 0)
+        self.manifest = CacheManifest(serverURL: "", imageSource: "", lastRefresh: nil, entries: [], totalSize: 0)
     }
 
     // MARK: - Lifecycle
@@ -39,19 +42,25 @@ actor DiskCache {
         // Ensure directories exist
         try? FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
 
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+
         guard FileManager.default.fileExists(atPath: manifestURL.path),
               let data = try? Data(contentsOf: manifestURL),
-              let loaded = try? JSONDecoder().decode(CacheManifest.self, from: data) else {
+              let loaded = try? decoder.decode(CacheManifest.self, from: data) else {
             OSLog.info("DiskCache: No existing manifest, starting fresh")
             return
         }
 
-        // Prune entries whose files no longer exist
+        // Prune entries whose files no longer exist or are older than maxAge
+        let cutoff = Date().addingTimeInterval(-Self.maxAge)
         var valid: [CacheEntry] = []
         var size: Int64 = 0
         for entry in loaded.entries {
             let file = cacheDirectory.appendingPathComponent(entry.filename)
-            if FileManager.default.fileExists(atPath: file.path) {
+            if entry.lastAccess < cutoff {
+                try? FileManager.default.removeItem(at: file)
+            } else if FileManager.default.fileExists(atPath: file.path) {
                 valid.append(entry)
                 size += entry.size
             }
@@ -60,6 +69,7 @@ actor DiskCache {
         manifest = CacheManifest(
             serverURL: loaded.serverURL,
             imageSource: loaded.imageSource,
+            lastRefresh: loaded.lastRefresh,
             entries: valid,
             totalSize: size
         )
@@ -86,6 +96,18 @@ actor DiskCache {
         manifest.imageSource = source
         saveManifest()
         return false
+    }
+
+    /// Whether the cache has been refreshed from the network within `maxAge`.
+    var isFresh: Bool {
+        guard let lastRefresh = manifest.lastRefresh else { return false }
+        return Date().timeIntervalSince(lastRefresh) < Self.maxAge
+    }
+
+    /// Mark that a successful network refresh has completed.
+    func markRefreshed() {
+        manifest.lastRefresh = Date()
+        saveManifest()
     }
 
     // MARK: - Read
@@ -241,6 +263,7 @@ actor DiskCache {
 private struct CacheManifest: Codable {
     var serverURL: String
     var imageSource: String
+    var lastRefresh: Date?
     var entries: [CacheEntry]
     var totalSize: Int64
 }

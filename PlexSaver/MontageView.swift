@@ -374,18 +374,22 @@ class MontageView: ScreenSaverView {
             let _ = await cache.validateConfig(serverURL: serverURL, imageSource: Preferences.imageSource)
             let cachedCount = await cache.count
 
+            let cacheFresh = await cache.isFresh
+
             if cachedCount > 0 {
                 let totalCells = gridManager?.cells.count ?? 12
                 let images = await cache.allCachedImages(limit: totalCells * 3)
 
                 if !images.isEmpty {
                     await MainActor.run {
-                        OSLog.info("startImagePipeline (\(self.instanceNumber)): Phase 1 — showing \(images.count) cached images")
+                        OSLog.info("startImagePipeline (\(self.instanceNumber)): Phase 1 — showing \(images.count) cached images (fresh: \(cacheFresh))")
                         self.cachedImages = images
                         self.fillGridWithCachedImages()
                         self.fadeInGrid()
                         self.startCachedRotation()
-                        self.showStatus("Connecting to \(providerName)...", position: .bottom)
+                        if !cacheFresh {
+                            self.showStatus("Connecting to \(providerName)...", position: .bottom)
+                        }
                     }
                 } else {
                     await MainActor.run {
@@ -399,11 +403,11 @@ class MontageView: ScreenSaverView {
             }
 
             // Phase 2: Connect to media server in background
-            await self.startNetworkPhase(provider: provider, providerName: providerName, cache: cache)
+            await self.startNetworkPhase(provider: provider, providerName: providerName, cache: cache, cacheFresh: cacheFresh)
         }
     }
 
-    private func startNetworkPhase(provider: any MediaProvider, providerName: String, cache: DiskCache) async {
+    private func startNetworkPhase(provider: any MediaProvider, providerName: String, cache: DiskCache, cacheFresh: Bool = false) async {
         let cellW = Int(gridManager?.cellWidth ?? 480)
         let cellH = Int(gridManager?.cellHeight ?? 270)
         let totalCells = (gridManager?.cells.count ?? 12)
@@ -446,6 +450,10 @@ class MontageView: ScreenSaverView {
         }
 
         let filledCount = await pool.prefill()
+
+        if filledCount > 0 {
+            await cache.markRefreshed()
+        }
 
         await MainActor.run {
             if filledCount == 0 {

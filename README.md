@@ -82,7 +82,7 @@ Select **Jellyfin** from the provider picker in the preferences panel. Enter you
 
 Montage uses a two-phase startup to eliminate cold-start delays:
 
-**Phase 1 — Instant (disk cache):** On launch, the screensaver checks `~/Library/Caches/com.montage.Montage/` for previously cached images. If found, the grid is filled immediately and rotation begins while a small "Connecting..." status appears at the bottom.
+**Phase 1 — Instant (disk cache):** On launch, the screensaver checks `~/Library/Application Support/com.montage.Montage/` for previously cached images. If found, the grid is filled immediately and rotation begins. Images are cached for 7 days — if the cache is fresh, no "Connecting..." banner is shown.
 
 **Phase 2 — Background (network):** A connection to the configured media server (Plex or Jellyfin) is established in the background. Once the image pool is filled from the network, it seamlessly takes over rotation from the cached images. New images are written through to the disk cache for next time.
 
@@ -110,7 +110,13 @@ Verify your media server is running and accessible from this Mac. Check that at 
 Ensure `Montage.saver` is in `~/Library/Screen Savers/`. Try removing and re-adding it.
 
 **Cache issues**
-Clear the disk cache by deleting `~/Library/Caches/com.montage.Montage/`. The screensaver will rebuild it on next launch.
+Images are cached for 7 days in `~/Library/Application Support/com.montage.Montage/`. To clear the cache manually:
+
+```bash
+rm -rf ~/Library/Application\ Support/com.montage.Montage/
+```
+
+The screensaver will rebuild the cache on next launch. The cache is also automatically cleared when you switch servers or change the image source setting.
 
 ## License
 
