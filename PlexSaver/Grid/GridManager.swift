@@ -7,6 +7,15 @@ import AppKit
 import QuartzCore
 import os.log
 
+/// What the grid remembers about the image currently (or most recently) shown
+/// in a cell. `artPath` is the reservation key handed back to `ImagePool` when
+/// the cell rotates away from this image.
+private struct CellMetadata {
+    let artPath: String
+    let title: String
+    let year: Int?
+}
+
 class GridManager {
     let rootLayer = CALayer()
     private(set) var cells: [GridCell] = []
@@ -19,7 +28,7 @@ class GridManager {
     private var showTitleReveal: Bool
     private var titleDisplayDuration: TimeInterval
     private let crossfadeDuration: TimeInterval = 1.0
-    private var cellMetadata: [Int: (title: String, year: Int?)] = [:]
+    private var cellMetadata: [Int: CellMetadata] = [:]
 
     init(frame: CGRect, rows: Int, columns: Int, rotationInterval: TimeInterval, showTitleReveal: Bool = true, titleDisplayDuration: TimeInterval = 2.0) {
         self.rows = max(1, rows)
@@ -146,6 +155,7 @@ class GridManager {
     // MARK: - Private
 
     /// Immediate rotation without title reveal — used for initial grid fill.
+    /// No prior occupant exists, so nothing to release.
     private func rotateCellImmediate(at index: Int) {
         guard let pool = imagePool, index < cells.count else { return }
         let cell = cells[index]
@@ -155,7 +165,7 @@ class GridManager {
             if let item = await pool.takeImage() {
                 await MainActor.run {
                     cell.displayImage(item.image, transitionDuration: 0)
-                    self.cellMetadata[index] = (title: item.title, year: item.year)
+                    self.cellMetadata[index] = CellMetadata(artPath: item.artPath, title: item.title, year: item.year)
                 }
             }
         }
@@ -173,8 +183,10 @@ class GridManager {
                     if self.showTitleReveal {
                         self.revealThenRotate(cell: cell, index: index, newItem: newItem)
                     } else {
+                        let outgoingPath = self.cellMetadata[index]?.artPath
                         cell.displayImage(newItem.image, transitionDuration: self.crossfadeDuration)
-                        self.cellMetadata[index] = (title: newItem.title, year: newItem.year)
+                        self.cellMetadata[index] = CellMetadata(artPath: newItem.artPath, title: newItem.title, year: newItem.year)
+                        self.scheduleRelease(of: outgoingPath, afterDelay: self.crossfadeDuration)
                     }
                 }
             }
@@ -183,8 +195,10 @@ class GridManager {
 
     /// Two-phase rotation: reveal current title, then crossfade to new image.
     private func revealThenRotate(cell: GridCell, index: Int, newItem: ImageWithMetadata) {
+        let outgoing = cellMetadata[index]
+
         // Show the outgoing image's title
-        if let metadata = cellMetadata[index] {
+        if let metadata = outgoing {
             var titleText = metadata.title
             if let year = metadata.year {
                 titleText += " (\(year))"
@@ -196,7 +210,20 @@ class GridManager {
         DispatchQueue.main.asyncAfter(deadline: .now() + titleDisplayDuration) { [weak self] in
             guard let self = self else { return }
             cell.displayImage(newItem.image, transitionDuration: self.crossfadeDuration)
-            self.cellMetadata[index] = (title: newItem.title, year: newItem.year)
+            self.cellMetadata[index] = CellMetadata(artPath: newItem.artPath, title: newItem.title, year: newItem.year)
+            // Outgoing image remains partly visible through the crossfade — keep its path
+            // reserved until the crossfade completes to prevent another cell from picking it.
+            self.scheduleRelease(of: outgoing?.artPath, afterDelay: self.crossfadeDuration)
+        }
+    }
+
+    /// Release an art path from the pool after the given delay (on the main queue).
+    /// No-op if `artPath` is nil or the pool has already been torn down.
+    private func scheduleRelease(of artPath: String?, afterDelay delay: TimeInterval) {
+        guard let artPath = artPath else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let pool = self?.imagePool else { return }
+            Task { await pool.release(artPath: artPath) }
         }
     }
 }

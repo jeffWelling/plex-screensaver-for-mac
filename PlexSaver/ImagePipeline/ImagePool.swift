@@ -7,9 +7,31 @@ import AppKit
 import os.log
 
 struct ImageWithMetadata {
+    let artPath: String
     let image: NSImage
     let title: String
     let year: Int?
+}
+
+/// Process-wide reservation of art paths. Multiple `ImagePool` instances run
+/// concurrently on multi-monitor setups (one per `MontageView`); delegating
+/// reservation to this shared actor prevents the same fanart from appearing
+/// on two monitors at the same moment.
+actor ReservationRegistry {
+    static let shared = ReservationRegistry()
+    private var reserved: Set<String> = []
+
+    /// Reserve `artPath` if available. Returns true iff this call newly reserved
+    /// it (caller is now responsible for releasing).
+    func reserve(_ artPath: String) -> Bool {
+        if reserved.contains(artPath) { return false }
+        reserved.insert(artPath)
+        return true
+    }
+
+    func release(_ artPath: String) {
+        reserved.remove(artPath)
+    }
 }
 
 actor ImagePool {
@@ -27,6 +49,11 @@ actor ImagePool {
     private let poolSize: Int
     private var isRefilling = false
     private var isStopped = false
+    /// Art paths this pool has reserved (via `ReservationRegistry.shared`) but
+    /// has not yet released. Tracked locally so `stop()` can return every one
+    /// of them to the registry on teardown — including paths held by on-screen
+    /// cells, whose release is normally orchestrated by `GridManager`.
+    private var reservedArtPaths: Set<String> = []
 
     init(provider: any MediaProvider, imageSource: ImageSourceType, cellWidth: Int, cellHeight: Int, poolSize: Int, diskCache: DiskCache? = nil) {
         self.provider = provider
@@ -98,11 +125,25 @@ actor ImagePool {
         return item
     }
 
-    /// Stop all background activity.
-    func stop() {
+    /// Stop all background activity. Returns every still-reserved art path to
+    /// the shared registry so other screens / future sessions can pick them up.
+    func stop() async {
         isStopped = true
         pool.removeAll()
         cache.clear()
+
+        let toRelease = reservedArtPaths
+        reservedArtPaths.removeAll()
+        for path in toRelease {
+            await ReservationRegistry.shared.release(path)
+        }
+    }
+
+    /// Release a previously-reserved art path so another cell can show it again.
+    /// Called by `GridManager` after a cell's outgoing image is no longer visible.
+    func release(artPath: String) async {
+        reservedArtPaths.remove(artPath)
+        await ReservationRegistry.shared.release(artPath)
     }
 
     // MARK: - Private
@@ -112,33 +153,61 @@ actor ImagePool {
         currentIndex = 0
     }
 
-    private func nextMediaItem() -> MediaItem? {
+    /// Returns the next (item, artPath) pair whose path is not currently reserved,
+    /// and reserves it via `ReservationRegistry.shared`. Resolves `artPath` once
+    /// at pick time so that `.mixed` mode (which randomizes among available
+    /// paths per call) stays consistent across the reservation's lifetime.
+    /// Returns nil if every path covered by the library is already reserved
+    /// (across all pools, not just this one).
+    private func nextMediaItem() async -> (item: MediaItem, artPath: String)? {
         guard !mediaItems.isEmpty else { return nil }
 
-        if currentIndex >= shuffledIndices.count {
-            reshuffleIndices()
+        // Bounded: try at most one full pass through the library.
+        var attempts = 0
+        while attempts < mediaItems.count {
+            if currentIndex >= shuffledIndices.count {
+                reshuffleIndices()
+            }
+
+            let item = mediaItems[shuffledIndices[currentIndex]]
+            currentIndex += 1
+            attempts += 1
+
+            guard let artPath = item.artPath(for: imageSource) else { continue }
+
+            if await ReservationRegistry.shared.reserve(artPath) {
+                reservedArtPaths.insert(artPath)
+                return (item, artPath)
+            }
         }
 
-        let item = mediaItems[shuffledIndices[currentIndex]]
-        currentIndex += 1
-        return item
+        return nil
     }
 
     private func fetchNextImage() async -> ImageWithMetadata? {
-        guard let item = nextMediaItem(),
-              let artPath = item.artPath(for: imageSource) else {
-            return nil
+        guard let (item, artPath) = await nextMediaItem() else { return nil }
+        // artPath is reserved from this point on.
+
+        if let result = await loadImage(for: item, artPath: artPath) {
+            return result
         }
 
+        // Fetch failed — release the reservation so this path can be tried again.
+        reservedArtPaths.remove(artPath)
+        await ReservationRegistry.shared.release(artPath)
+        return nil
+    }
+
+    private func loadImage(for item: MediaItem, artPath: String) async -> ImageWithMetadata? {
         // 1. Check in-memory cache
         if let cached = cache.get(artPath) {
-            return ImageWithMetadata(image: cached, title: item.title, year: item.year)
+            return ImageWithMetadata(artPath: artPath, image: cached, title: item.title, year: item.year)
         }
 
         // 2. Check disk cache
         if let disk = diskCache, let cached = await disk.get(artPath) {
             cache.set(artPath, image: cached)
-            return ImageWithMetadata(image: cached, title: item.title, year: item.year)
+            return ImageWithMetadata(artPath: artPath, image: cached, title: item.title, year: item.year)
         }
 
         // 3. Fetch from network, write-through to both caches
@@ -148,7 +217,7 @@ actor ImagePool {
             if let disk = diskCache {
                 await disk.store(artPath, image: image)
             }
-            return ImageWithMetadata(image: image, title: item.title, year: item.year)
+            return ImageWithMetadata(artPath: artPath, image: image, title: item.title, year: item.year)
         } catch {
             OSLog.info("ImagePool: Failed to fetch image for \(item.title): \(error.localizedDescription)")
             return nil

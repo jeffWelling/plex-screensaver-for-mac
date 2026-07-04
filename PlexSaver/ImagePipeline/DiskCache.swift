@@ -81,9 +81,10 @@ actor DiskCache {
     /// Check if the cache matches the current config. Returns true if valid.
     /// If config changed, the cache is cleared.
     func validateConfig(serverURL: String, imageSource: ImageSourceType) -> Bool {
+        let normalizedURL = Self.normalizeServerURL(serverURL)
         let source = imageSource.rawValue
 
-        if manifest.serverURL == serverURL && manifest.imageSource == source {
+        if manifest.serverURL == normalizedURL && manifest.imageSource == source {
             return true
         }
 
@@ -92,10 +93,20 @@ actor DiskCache {
             clearSync()
         }
 
-        manifest.serverURL = serverURL
+        manifest.serverURL = normalizedURL
         manifest.imageSource = source
         saveManifest()
         return false
+    }
+
+    /// Normalize server URL so cosmetic differences (trailing slash, case in
+    /// the scheme/host) don't look like a config change and invalidate the cache.
+    private static func normalizeServerURL(_ url: String) -> String {
+        var trimmed = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        while trimmed.hasSuffix("/") {
+            trimmed = String(trimmed.dropLast())
+        }
+        return trimmed.lowercased()
     }
 
     /// Whether the cache has been refreshed from the network within `maxAge`.

@@ -5,60 +5,26 @@
 
 import AppKit
 
+/// Thread-safe in-memory image cache backed by `NSCache`. Eviction is handled
+/// by AppKit using a size-class heuristic (not strict LRU, but close enough
+/// for our modest pool sizes). We wrap NSCache so the rest of the codebase
+/// interacts with a narrow, value-typed API.
 final class ImageCache {
-    private var cache: [String: NSImage] = [:]
-    private var accessOrder: [String] = []
-    private let maxSize: Int
-    private let lock = NSLock()
+    private let cache = NSCache<NSString, NSImage>()
 
     init(maxSize: Int = 100) {
-        self.maxSize = maxSize
+        cache.countLimit = maxSize
     }
 
     func get(_ key: String) -> NSImage? {
-        lock.lock()
-        defer { lock.unlock() }
-
-        guard let image = cache[key] else { return nil }
-        // Move to end of access order (most recently used)
-        if let idx = accessOrder.firstIndex(of: key) {
-            accessOrder.remove(at: idx)
-            accessOrder.append(key)
-        }
-        return image
+        return cache.object(forKey: key as NSString)
     }
 
     func set(_ key: String, image: NSImage) {
-        lock.lock()
-        defer { lock.unlock() }
-
-        if cache[key] != nil {
-            // Already cached, just update access order
-            if let idx = accessOrder.firstIndex(of: key) {
-                accessOrder.remove(at: idx)
-            }
-        } else {
-            // Evict LRU if at capacity
-            while cache.count >= maxSize, let lruKey = accessOrder.first {
-                cache.removeValue(forKey: lruKey)
-                accessOrder.removeFirst()
-            }
-        }
-
-        cache[key] = image
-        accessOrder.append(key)
+        cache.setObject(image, forKey: key as NSString)
     }
 
     func clear() {
-        lock.lock()
-        defer { lock.unlock() }
-        cache.removeAll()
-        accessOrder.removeAll()
-    }
-
-    var count: Int {
-        lock.lock()
-        defer { lock.unlock() }
-        return cache.count
+        cache.removeAllObjects()
     }
 }
