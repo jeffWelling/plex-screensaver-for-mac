@@ -16,6 +16,10 @@ actor DiskCache {
     private let maxSizeBytes: Int
     private var manifest: CacheManifest
     private var isLoaded = false
+    /// Counts LRU touches since the manifest was last persisted, so access-time
+    /// updates are flushed periodically rather than on every read.
+    private var touchesSinceSave = 0
+    private static let touchSaveThreshold = 16
 
     /// Default max cache size: 1 GB
     static let defaultMaxSize = 1_073_741_824
@@ -25,7 +29,7 @@ actor DiskCache {
 
     init(maxSize: Int = DiskCache.defaultMaxSize) {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-            .appendingPathComponent("com.montage.Montage", isDirectory: true)
+            .appendingPathComponent(AppConstants.module, isDirectory: true)
         self.cacheDirectory = base.appendingPathComponent("images", isDirectory: true)
         self.manifestURL = base.appendingPathComponent("manifest.json")
         self.maxSizeBytes = maxSize
@@ -95,6 +99,10 @@ actor DiskCache {
 
         manifest.serverURL = normalizedURL
         manifest.imageSource = source
+        // The cache no longer reflects a network refresh for this config, so
+        // clear the freshness timestamp — otherwise `isFresh` could report true
+        // against an emptied cache and suppress the "Connecting…" banner.
+        manifest.lastRefresh = nil
         saveManifest()
         return false
     }
@@ -223,6 +231,15 @@ actor DiskCache {
     private func touchEntry(_ key: String) {
         if let idx = manifest.entries.firstIndex(where: { $0.key == key }) {
             manifest.entries[idx].lastAccess = Date()
+            // Persist access times periodically. Screensaver processes are
+            // frequently killed rather than cleanly torn down, so unpersisted
+            // LRU timestamps would otherwise be lost across restarts and skew
+            // eviction/age decisions.
+            touchesSinceSave += 1
+            if touchesSinceSave >= Self.touchSaveThreshold {
+                touchesSinceSave = 0
+                saveManifest()
+            }
         }
     }
 

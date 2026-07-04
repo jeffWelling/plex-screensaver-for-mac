@@ -86,7 +86,13 @@ actor PlexClient {
     }
 
     private func buildTranscodeURL(imagePath: String, width: Int, height: Int) -> String {
-        let encodedPath = imagePath.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? imagePath
+        // Encode with only RFC 3986 unreserved characters so that reserved
+        // characters in the inner path (notably `+`, `&`, `=`, `?`) are escaped
+        // and cannot corrupt the outer query string. `.urlQueryAllowed` leaves
+        // those intact, which breaks the `url=` parameter.
+        var allowed = CharacterSet.alphanumerics
+        allowed.insert(charactersIn: "-._~")
+        let encodedPath = imagePath.addingPercentEncoding(withAllowedCharacters: allowed) ?? imagePath
         return "\(serverURL)/photo/:/transcode?url=\(encodedPath)&width=\(width)&height=\(height)&minSize=1"
     }
 }

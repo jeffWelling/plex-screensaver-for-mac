@@ -32,12 +32,39 @@ actor JellyfinClient {
         return response.items
     }
 
-    /// Fetch all media items in a library
+    /// Fetch all media items in a library, paging until the full set is
+    /// retrieved (Jellyfin caps a single response, so a fixed Limit silently
+    /// truncates large libraries).
     func fetchAllItems(libraryId: String) async throws -> [JellyfinItem] {
-        let path = "/Users/\(userId)/Items?ParentId=\(libraryId)&Recursive=true&IncludeItemTypes=Movie,Series,MusicAlbum&Fields=PrimaryImageAspectRatio&Limit=10000"
-        let data = try await request(path: path)
-        let response = try JSONDecoder().decode(JellyfinItemsResponse.self, from: data)
-        return response.items
+        let pageSize = 500
+        var startIndex = 0
+        var allItems: [JellyfinItem] = []
+
+        while true {
+            var components = URLComponents()
+            components.path = "/Users/\(userId)/Items"
+            components.queryItems = [
+                URLQueryItem(name: "ParentId", value: libraryId),
+                URLQueryItem(name: "Recursive", value: "true"),
+                URLQueryItem(name: "IncludeItemTypes", value: "Movie,Series,MusicAlbum"),
+                URLQueryItem(name: "Fields", value: "PrimaryImageAspectRatio"),
+                URLQueryItem(name: "StartIndex", value: String(startIndex)),
+                URLQueryItem(name: "Limit", value: String(pageSize))
+            ]
+
+            guard let query = components.percentEncodedQuery else { break }
+            let data = try await request(path: "/Users/\(userId)/Items?\(query)")
+            let response = try JSONDecoder().decode(JellyfinItemsResponse.self, from: data)
+
+            allItems.append(contentsOf: response.items)
+            startIndex += response.items.count
+
+            if response.items.isEmpty || allItems.count >= response.totalRecordCount {
+                break
+            }
+        }
+
+        return allItems
     }
 
     /// Fetch an image — Jellyfin images are unauthenticated

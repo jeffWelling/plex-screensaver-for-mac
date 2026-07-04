@@ -28,14 +28,27 @@ class GridManager {
     private var showTitleReveal: Bool
     private var titleDisplayDuration: TimeInterval
     private let crossfadeDuration: TimeInterval = 1.0
+    private let backingScale: CGFloat
     private var cellMetadata: [Int: CellMetadata] = [:]
 
-    init(frame: CGRect, rows: Int, columns: Int, rotationInterval: TimeInterval, showTitleReveal: Bool = true, titleDisplayDuration: TimeInterval = 2.0) {
+    init(frame: CGRect, rows: Int, columns: Int, rotationInterval: TimeInterval, showTitleReveal: Bool = true, titleDisplayDuration: TimeInterval = 2.0, backingScale: CGFloat = 2.0) {
         self.rows = max(1, rows)
         self.columns = max(1, columns)
         self.rotationInterval = rotationInterval
-        self.showTitleReveal = showTitleReveal
-        self.titleDisplayDuration = max(0.5, min(titleDisplayDuration, rotationInterval - crossfadeDuration))
+        self.backingScale = backingScale
+
+        // The reveal phase must fit within the rotation period alongside the
+        // crossfade. If there is no room, disable the reveal rather than forcing
+        // a duration that overruns the interval and causes overlapping
+        // transitions.
+        let availableForReveal = rotationInterval - crossfadeDuration
+        if showTitleReveal && availableForReveal > 0.3 {
+            self.showTitleReveal = true
+            self.titleDisplayDuration = min(titleDisplayDuration, availableForReveal)
+        } else {
+            self.showTitleReveal = false
+            self.titleDisplayDuration = 0
+        }
 
         rootLayer.frame = frame
         rootLayer.backgroundColor = CGColor.black
@@ -62,7 +75,7 @@ class GridManager {
                 let x = CGFloat(col) * cellW
                 let y = CGFloat(row) * cellH
                 let cellFrame = CGRect(x: x, y: y, width: cellW, height: cellH)
-                let cell = GridCell(frame: cellFrame, row: row, column: col)
+                let cell = GridCell(frame: cellFrame, row: row, column: col, backingScale: backingScale)
                 cells.append(cell)
                 rootLayer.addSublayer(cell.containerLayer)
             }
@@ -77,19 +90,18 @@ class GridManager {
         self.imagePool = imagePool
 
         // Fill all cells at once (hidden behind fade-in overlay) — no title reveal on initial fill
-        let now = Date()
         for i in 0..<cells.count {
             rotateCellImmediate(at: i)
-            lastUpdateTime[i] = now
         }
 
-        // One cell changes every rotationInterval seconds
-        rotationTimer = Timer.scheduledTimer(withTimeInterval: rotationInterval, repeats: true) { [weak self] _ in
+        // One cell changes every rotationInterval seconds. Construct the timer
+        // unscheduled and add it once in `.common` mode so it keeps firing
+        // during event tracking without being double-registered.
+        let timer = Timer(timeInterval: rotationInterval, repeats: true) { [weak self] _ in
             self?.rotateWeightedRandomCell()
         }
-        if let timer = rotationTimer {
-            RunLoop.main.add(timer, forMode: .common)
-        }
+        RunLoop.main.add(timer, forMode: .common)
+        rotationTimer = timer
 
         OSLog.info("GridManager: Started rotation, one cell every \(String(format: "%.0f", rotationInterval))s")
     }
@@ -159,13 +171,13 @@ class GridManager {
     private func rotateCellImmediate(at index: Int) {
         guard let pool = imagePool, index < cells.count else { return }
         let cell = cells[index]
-        lastUpdateTime[index] = Date()
 
-        Task {
+        Task { [weak self] in
             if let item = await pool.takeImage() {
                 await MainActor.run {
                     cell.displayImage(item.image, transitionDuration: 0)
-                    self.cellMetadata[index] = CellMetadata(artPath: item.artPath, title: item.title, year: item.year)
+                    self?.cellMetadata[index] = CellMetadata(artPath: item.artPath, title: item.title, year: item.year)
+                    self?.lastUpdateTime[index] = Date()
                 }
             }
         }
@@ -175,11 +187,12 @@ class GridManager {
     private func rotateCell(at index: Int) {
         guard let pool = imagePool, index < cells.count else { return }
         let cell = cells[index]
-        lastUpdateTime[index] = Date()
 
-        Task {
+        Task { [weak self] in
             if let newItem = await pool.takeImage() {
                 await MainActor.run {
+                    guard let self = self else { return }
+                    self.lastUpdateTime[index] = Date()
                     if self.showTitleReveal {
                         self.revealThenRotate(cell: cell, index: index, newItem: newItem)
                     } else {

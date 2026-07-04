@@ -24,11 +24,18 @@ struct Preferences {
     @SimpleStorage(key: "PlexServerURL", defaultValue: "")
     static var plexServerURL: String
 
-    @SimpleStorage(key: "PlexToken", defaultValue: "")
-    static var plexToken: String
+    /// Plex server access token — stored in the Keychain (see `secret`/`storeSecret`).
+    static var plexToken: String {
+        get { secret("PlexToken") }
+        set { storeSecret("PlexToken", newValue) }
+    }
 
-    @SimpleStorage(key: "PlexAuthToken", defaultValue: "")
-    static var plexAuthToken: String
+    /// plex.tv account-wide token used for server discovery — the most
+    /// sensitive credential; stored in the Keychain.
+    static var plexAuthToken: String {
+        get { secret("PlexAuthToken") }
+        set { storeSecret("PlexAuthToken", newValue) }
+    }
 
     @SimpleStorage(key: "GridRows", defaultValue: 3)
     static var gridRows: Int
@@ -64,11 +71,52 @@ struct Preferences {
     @SimpleStorage(key: "JellyfinUsername", defaultValue: "")
     static var jellyfinUsername: String
 
-    @SimpleStorage(key: "JellyfinAccessToken", defaultValue: "")
-    static var jellyfinAccessToken: String
+    /// Jellyfin access token — stored in the Keychain.
+    static var jellyfinAccessToken: String {
+        get { secret("JellyfinAccessToken") }
+        set { storeSecret("JellyfinAccessToken", newValue) }
+    }
 
     @SimpleStorage(key: "JellyfinUserId", defaultValue: "")
     static var jellyfinUserId: String
+
+    // MARK: - Secret Storage (Keychain with defaults fallback)
+
+    /// Read a secret from the Keychain, migrating any legacy plaintext value
+    /// found in defaults. Falls back to the defaults value if the Keychain is
+    /// unavailable so persistence never breaks.
+    private static func secret(_ key: String) -> String {
+        if let value = KeychainStore.get(key), !value.isEmpty {
+            return value
+        }
+        // Legacy migration / fallback: read any plaintext value written by an
+        // older build (or by the fallback path below).
+        if let defaults = ScreenSaverDefaults(forModuleWithName: AppConstants.module),
+           let legacy = defaults.string(forKey: key), !legacy.isEmpty {
+            if KeychainStore.set(key, legacy) {
+                // Migrated into the Keychain — remove the plaintext copy.
+                defaults.removeObject(forKey: key)
+                defaults.synchronize()
+            }
+            return legacy
+        }
+        return ""
+    }
+
+    /// Persist a secret to the Keychain, falling back to defaults if the
+    /// Keychain is unavailable in this host process.
+    private static func storeSecret(_ key: String, _ value: String) {
+        let defaults = ScreenSaverDefaults(forModuleWithName: AppConstants.module)
+        if KeychainStore.set(key, value) {
+            // Stored securely — ensure no stale plaintext copy remains.
+            defaults?.removeObject(forKey: key)
+            defaults?.synchronize()
+        } else {
+            // Keychain unavailable — preserve functionality via defaults.
+            defaults?.set(value, forKey: key)
+            defaults?.synchronize()
+        }
+    }
 }
 
 // MARK: - Property Wrappers
@@ -76,7 +124,7 @@ struct Preferences {
 @propertyWrapper struct Storage<T: Codable> {
     private let key: String
     private let defaultValue: T
-    private let module = Bundle.main.bundleIdentifier ?? "com.montage.Montage"
+    private let module = AppConstants.module
 
     init(key: String, defaultValue: T) {
         self.key = key
@@ -111,7 +159,7 @@ struct Preferences {
 @propertyWrapper struct SimpleStorage<T> {
     private let key: String
     private let defaultValue: T
-    private let module = Bundle.main.bundleIdentifier ?? "com.montage.Montage"
+    private let module = AppConstants.module
 
     init(key: String, defaultValue: T) {
         self.key = key

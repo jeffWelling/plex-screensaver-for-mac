@@ -28,7 +28,7 @@ class GridCell {
     private static let pillInsetX: CGFloat = 10  // margin from cell edge
     private static let pillInsetY: CGFloat = 10
 
-    init(frame: CGRect, row: Int, column: Int) {
+    init(frame: CGRect, row: Int, column: Int, backingScale: CGFloat = 2.0) {
         self.row = row
         self.column = column
 
@@ -44,7 +44,7 @@ class GridCell {
         layer2.contentsGravity = .resizeAspectFill
         layer2.opacity = 0
 
-        let scale = NSScreen.main?.backingScaleFactor ?? 2.0
+        let scale = backingScale
         layer1.contentsScale = scale
         layer2.contentsScale = scale
 
