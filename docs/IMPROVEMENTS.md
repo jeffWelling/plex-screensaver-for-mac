@@ -2,6 +2,31 @@
 
 _Review date: 2026-07-04. Reviewed at commit `4202a43` (v0.4.0)._
 
+## Implementation status
+
+A first implementation pass has landed the following (see git history on
+`claude/project-review-improvements-y77cm9`). **These changes were written but
+not yet compiled/run on a macOS + Xcode machine — build and smoke-test before
+merging**, paying special attention to the Keychain path in both host processes.
+
+- **Done:** §1.1 tokens → Keychain (with legacy migration + safe UserDefaults
+  fallback), §1.2 (partial) prefer HTTPS + dedup in Plex discovery, §1.3 Logger
+  privacy, §3.3 timer double-registration, §3.4 title-duration clamp, §3.5
+  Jellyfin pagination + query encoding, §3.7 Plex transcode URL encoding, §3.8
+  `lastUpdateTime` at display time (+ `[weak self]` in rotate Tasks), §3.10
+  version-overlay leak, §3.12 `isFresh` reset, §4.1 unified preferences module
+  name (`AppConstants.module`), §4.2 batched LRU persistence, §5.5 Jellyfin
+  `deviceId` thread-safety, §9.1 GitHub Actions CI, §10.1/§10.2 Retina +
+  per-screen backing scale (+ zero-bounds fallback for §3.1).
+- **Still open (higher-risk or larger, left for a machine that can build/test):**
+  §1.2 (full HTTP warning UX), §3.2 concurrent-cell rotation guard, §3.6 Plex
+  pagination, §3.9 (further discovery polish), §3.13 dead error paths, §4.3–§4.6
+  cache TTL/manifest/re-encode work, §5.1–§5.4 (shared session config / retry /
+  auth-error mapping / headers), §6.1 shared `HTTPClient` refactor, §6.2–§6.6,
+  §7.x UI/accessibility, §8 unit-test target, §9.2/§9.3 signing & release,
+  §10.3–§10.7 rendering/perf, §11 packaging.
+
+
 This document is a prioritized, actionable backlog of improvements across every
 engineering discipline: security, correctness, networking, persistence,
 rendering/performance, UI/UX & accessibility, testing, CI/CD & release,

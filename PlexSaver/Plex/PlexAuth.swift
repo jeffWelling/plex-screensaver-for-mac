@@ -151,23 +151,28 @@ actor PlexAuth {
 
         let resources = try JSONDecoder().decode([PlexResource].self, from: data)
 
-        // Filter to servers only and build PlexServer objects
+        // One entry per server, choosing the best single connection:
+        // prefer HTTPS (credentials/token are never sent in the clear), then
+        // prefer local over remote. This also dedupes the many connection URIs
+        // Plex returns for a single physical server.
         var servers: [PlexServer] = []
         for resource in resources where resource.provides.contains("server") {
             let token = resource.accessToken ?? authToken
-            // Prefer local connections, fall back to remote
-            let localConns = resource.connections.filter { $0.local }
-            let remoteConns = resource.connections.filter { !$0.local }
 
-            for conn in localConns {
-                servers.append(PlexServer(name: resource.name, uri: conn.uri, token: token, isLocal: true))
+            let ranked = resource.connections.sorted { a, b in
+                let aSecure = a.uri.hasPrefix("https")
+                let bSecure = b.uri.hasPrefix("https")
+                if aSecure != bSecure { return aSecure }   // HTTPS first
+                if a.local != b.local { return a.local }    // then local
+                return false
             }
-            for conn in remoteConns {
-                servers.append(PlexServer(name: resource.name, uri: conn.uri, token: token, isLocal: false))
+
+            if let best = ranked.first {
+                servers.append(PlexServer(name: resource.name, uri: best.uri, token: token, isLocal: best.local))
             }
         }
 
-        OSLog.info("PlexAuth: Discovered \(servers.count) server connections")
+        OSLog.info("PlexAuth: Discovered \(servers.count) servers")
         return servers
     }
 }

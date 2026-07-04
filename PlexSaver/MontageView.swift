@@ -36,6 +36,15 @@ class MontageView: ScreenSaverView {
         return InstanceTracker.isRunningInApp
     }
 
+    /// Backing scale of the screen this view actually lives on (falls back to
+    /// the main screen). Using the view's own screen keeps rendering crisp on
+    /// mixed-DPI multi-monitor setups.
+    private var backingScale: CGFloat {
+        return window?.screen?.backingScaleFactor
+            ?? NSScreen.main?.backingScaleFactor
+            ?? 2.0
+    }
+
     // MARK: - Init
 
     override init?(frame: NSRect, isPreview: Bool) {
@@ -174,7 +183,7 @@ class MontageView: ScreenSaverView {
         }
 
         let textLayer = CATextLayer()
-        textLayer.contentsScale = NSScreen.main?.backingScaleFactor ?? 2.0
+        textLayer.contentsScale = backingScale
         textLayer.isWrapped = true
 
         switch position {
@@ -260,7 +269,7 @@ class MontageView: ScreenSaverView {
         let build = bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"
 
         let textLayer = CATextLayer()
-        textLayer.contentsScale = NSScreen.main?.backingScaleFactor ?? 2.0
+        textLayer.contentsScale = backingScale
         textLayer.string = "v\(version) (\(build))"
         textLayer.fontSize = 11
         textLayer.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
@@ -302,7 +311,8 @@ class MontageView: ScreenSaverView {
             columns: columns,
             rotationInterval: Preferences.rotationInterval,
             showTitleReveal: Preferences.showTitleReveal,
-            titleDisplayDuration: Preferences.titleDisplayDuration
+            titleDisplayDuration: Preferences.titleDisplayDuration,
+            backingScale: backingScale
         )
 
         guard let rootLayer = self.layer else {
@@ -368,6 +378,9 @@ class MontageView: ScreenSaverView {
             self.diskCache = cache
         }
 
+        // Capture the backing scale on the main thread for the background phase.
+        let scale = backingScale
+
         Task {
             // Phase 1: Try to show cached images instantly
             await cache.load()
@@ -403,13 +416,18 @@ class MontageView: ScreenSaverView {
             }
 
             // Phase 2: Connect to media server in background
-            await self.startNetworkPhase(provider: provider, providerName: providerName, cache: cache, cacheFresh: cacheFresh)
+            await self.startNetworkPhase(provider: provider, providerName: providerName, cache: cache, cacheFresh: cacheFresh, backingScale: scale)
         }
     }
 
-    private func startNetworkPhase(provider: any MediaProvider, providerName: String, cache: DiskCache, cacheFresh: Bool = false) async {
-        let cellW = Int(gridManager?.cellWidth ?? 480)
-        let cellH = Int(gridManager?.cellHeight ?? 270)
+    private func startNetworkPhase(provider: any MediaProvider, providerName: String, cache: DiskCache, cacheFresh: Bool = false, backingScale: CGFloat = 2.0) async {
+        // Request images at pixel resolution (point size × backing scale) so
+        // they aren't upscaled by CoreAnimation on Retina displays. Fall back to
+        // sensible defaults when the grid has no size yet (e.g. pre-layout).
+        let pointW = gridManager?.cellWidth ?? 0
+        let pointH = gridManager?.cellHeight ?? 0
+        let cellW = Int((pointW > 0 ? pointW : 480) * backingScale)
+        let cellH = Int((pointH > 0 ? pointH : 270) * backingScale)
         let totalCells = (gridManager?.cells.count ?? 12)
         let poolSize = totalCells * 3
 
@@ -502,12 +520,11 @@ class MontageView: ScreenSaverView {
         let interval = Preferences.rotationInterval
         cachedImageIndex = 0
 
-        cachedRotationTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
             self?.rotateCachedCell()
         }
-        if let timer = cachedRotationTimer {
-            RunLoop.main.add(timer, forMode: .common)
-        }
+        RunLoop.main.add(timer, forMode: .common)
+        cachedRotationTimer = timer
     }
 
     private func rotateCachedCell() {
@@ -558,6 +575,8 @@ class MontageView: ScreenSaverView {
         initialFadeLayer?.removeFromSuperlayer()
         initialFadeLayer = nil
         removeStatusLayer()
+        versionLayer?.removeFromSuperlayer()
+        versionLayer = nil
 
         // Rebuild with new settings
         if isAnimationStarted {

@@ -7,8 +7,11 @@ import Foundation
 
 /// Handles Jellyfin username/password authentication
 actor JellyfinAuth {
-    /// Persistent device identifier (stored in UserDefaults)
-    static var deviceId: String {
+    /// Persistent device identifier (stored in UserDefaults).
+    /// A `lazy static let` so the generate-and-store happens exactly once even
+    /// under concurrent first access (two threads could otherwise each mint and
+    /// persist a different UUID).
+    static let deviceId: String = {
         let key = "JellyfinDeviceId"
         if let existing = UserDefaults.standard.string(forKey: key) {
             return existing
@@ -16,7 +19,7 @@ actor JellyfinAuth {
         let newId = UUID().uuidString
         UserDefaults.standard.set(newId, forKey: key)
         return newId
-    }
+    }()
 
     /// Authenticate with username and password
     /// Returns (accessToken, userId) on success

@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build
+    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        scheme: [PlexSaver, SaverTest]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -switch /Applications/Xcode_16.app
+
+      - name: Show versions
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Build ${{ matrix.scheme }}
+        run: |
+          xcodebuild \
+            -project PlexSaver.xcodeproj \
+            -scheme ${{ matrix.scheme }} \
+            -configuration Debug \
+            CODE_SIGNING_ALLOWED=NO \
+            build
