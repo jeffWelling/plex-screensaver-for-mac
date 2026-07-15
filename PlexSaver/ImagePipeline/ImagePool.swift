@@ -51,6 +51,28 @@ actor ReservationRegistry {
     var count: Int { reservedArtPaths.count }
 }
 
+/// De-duplicates concurrent network image fetches for the same art path across
+/// all pools (U4 tier 1). With reservation moved to display time, two monitors'
+/// pools can independently hold the same art path and would otherwise each
+/// download it; callers here share a single in-flight request keyed by art path.
+/// The disk cache already stores one size per art path, so coalescing on the
+/// path alone is consistent with what warm reads return.
+actor ImageRequestCoalescer {
+    static let shared = ImageRequestCoalescer()
+    private var inFlight: [String: Task<NSImage?, Never>] = [:]
+
+    func image(for artPath: String, fetch: @Sendable @escaping () async -> NSImage?) async -> NSImage? {
+        if let existing = inFlight[artPath] {
+            return await existing.value
+        }
+        let task = Task { await fetch() }
+        inFlight[artPath] = task
+        let image = await task.value
+        inFlight[artPath] = nil
+        return image
+    }
+}
+
 actor ImagePool {
     private let provider: any MediaProvider
     private let imageSource: ImageSourceType
@@ -58,6 +80,9 @@ actor ImagePool {
     private let cellHeight: Int
     private let cache: ImageCache
     private let diskCache: DiskCache?
+    /// Shared reservation registry (injectable so tests can drive a pool against
+    /// an isolated registry instead of the process-wide singleton).
+    private let registry: ReservationRegistry
 
     private var mediaItems: [MediaItem] = []
     private var shuffledIndices: [Int] = []
@@ -81,7 +106,7 @@ actor ImagePool {
     /// normally orchestrated by `GridManager`.
     private var reservedTitleKeyByArtPath: [String: String] = [:]
 
-    init(provider: any MediaProvider, imageSource: ImageSourceType, cellWidth: Int, cellHeight: Int, poolSize: Int, diskCache: DiskCache? = nil) {
+    init(provider: any MediaProvider, imageSource: ImageSourceType, cellWidth: Int, cellHeight: Int, poolSize: Int, diskCache: DiskCache? = nil, registry: ReservationRegistry = .shared) {
         self.provider = provider
         self.imageSource = imageSource
         self.cellWidth = cellWidth
@@ -89,6 +114,7 @@ actor ImagePool {
         self.poolSize = poolSize
         self.cache = ImageCache(maxSize: poolSize * 2)
         self.diskCache = diskCache
+        self.registry = registry
     }
 
     /// Load media items from configured libraries. Returns count of items with art.
@@ -145,20 +171,36 @@ actor ImagePool {
         return pool.count
     }
 
-    /// Take an image from the pool. Returns nil if pool is empty.
-    func takeImage() -> ImageWithMetadata? {
-        let item = pool.isEmpty ? nil : pool.removeFirst()
+    /// Take an image from the pool, reserving its identity at display time
+    /// (U4 tier 1). The pool holds *unreserved* candidates; pop until one whose
+    /// art path AND title are both free across every cell/monitor can be
+    /// reserved. Candidates that lose the reservation race are discarded (refill
+    /// replenishes). Reservation pressure is therefore exactly what is on screen
+    /// (cells × monitors), not on-screen + pooled — so a small library or a
+    /// second monitor is never starved by another pool's pooled reservations,
+    /// and no false "check server connection" error is shown for a healthy setup.
+    /// Returns nil if nothing reservable is available.
+    func takeImage() async -> ImageWithMetadata? {
+        while !pool.isEmpty {
+            let candidate = pool.removeFirst()
+            triggerRefillIfNeeded()
+            if await registry.reserve(artPath: candidate.artPath, titleKey: candidate.titleKey) {
+                reservedTitleKeyByArtPath[candidate.artPath] = candidate.titleKey
+                return candidate
+            }
+            // Already reserved elsewhere — drop it and try the next candidate.
+        }
+        triggerRefillIfNeeded()
+        return nil
+    }
 
-        // Trigger a background refill whenever the pool is low OR empty. The
-        // check deliberately runs even on the empty path: a pool that drained to
-        // empty (a network blip, or a moment where every unreserved path was
-        // momentarily taken) must still schedule a refill so it can recover once
-        // conditions improve, instead of freezing until the saver restarts.
+    /// Schedule a background refill whenever the pool is low or empty. Runs even
+    /// on the empty path so a pool that drained (network blip, or a burst of
+    /// discarded already-reserved candidates) still recovers instead of freezing.
+    private func triggerRefillIfNeeded() {
         if pool.count < poolSize / 2 && !isRefilling && !isStopped {
             Task { await refillPool() }
         }
-
-        return item
     }
 
     /// Stop all background activity. Returns every still-reserved art path to
@@ -171,7 +213,7 @@ actor ImagePool {
         let held = reservedTitleKeyByArtPath
         reservedTitleKeyByArtPath.removeAll()
         for (artPath, titleKey) in held {
-            await ReservationRegistry.shared.release(artPath: artPath, titleKey: titleKey)
+            await registry.release(artPath: artPath, titleKey: titleKey)
         }
     }
 
@@ -180,7 +222,7 @@ actor ImagePool {
     /// outgoing image is no longer visible.
     func release(artPath: String) async {
         let titleKey = reservedTitleKeyByArtPath.removeValue(forKey: artPath)
-        await ReservationRegistry.shared.release(artPath: artPath, titleKey: titleKey)
+        await registry.release(artPath: artPath, titleKey: titleKey)
     }
 
     // MARK: - Private
@@ -190,13 +232,12 @@ actor ImagePool {
         currentIndex = 0
     }
 
-    /// Returns the next (item, artPath) pair whose path is not currently reserved,
-    /// and reserves it via `ReservationRegistry.shared`. Resolves `artPath` once
-    /// at pick time so that `.mixed` mode (which randomizes among available
-    /// paths per call) stays consistent across the reservation's lifetime.
-    /// Returns nil if every path covered by the library is already reserved
-    /// (across all pools, not just this one).
-    private func nextMediaItem() async -> (item: MediaItem, artPath: String)? {
+    /// Returns the next (item, artPath) pair to fetch into the pool. Under
+    /// reserve-at-take (U4 tier 1) this does NOT reserve — the pool holds
+    /// unreserved candidates and `takeImage()` reserves at display time.
+    /// Resolves `artPath` once here so `.mixed` mode (which randomizes among
+    /// available paths per call) is stable for this candidate's lifetime.
+    private func nextMediaItem() -> (item: MediaItem, artPath: String)? {
         guard !mediaItems.isEmpty else { return nil }
 
         // Bounded: try at most one full pass through the library.
@@ -211,29 +252,15 @@ actor ImagePool {
             attempts += 1
 
             guard let artPath = item.artPath(for: imageSource) else { continue }
-
-            // Reserve on both artwork and title identity (U5).
-            if await ReservationRegistry.shared.reserve(artPath: artPath, titleKey: item.titleKey) {
-                reservedTitleKeyByArtPath[artPath] = item.titleKey
-                return (item, artPath)
-            }
+            return (item, artPath)
         }
 
         return nil
     }
 
     private func fetchNextImage() async -> ImageWithMetadata? {
-        guard let (item, artPath) = await nextMediaItem() else { return nil }
-        // artPath (and its title key) are reserved from this point on.
-
-        if let result = await loadImage(for: item, artPath: artPath) {
-            return result
-        }
-
-        // Fetch failed — release the reservation so this item can be tried again.
-        let titleKey = reservedTitleKeyByArtPath.removeValue(forKey: artPath)
-        await ReservationRegistry.shared.release(artPath: artPath, titleKey: titleKey)
-        return nil
+        guard let (item, artPath) = nextMediaItem() else { return nil }
+        return await loadImage(for: item, artPath: artPath)
     }
 
     private func loadImage(for item: MediaItem, artPath: String) async -> ImageWithMetadata? {
@@ -248,18 +275,24 @@ actor ImagePool {
             return ImageWithMetadata(artPath: artPath, image: cached, title: item.title, year: item.year, titleKey: item.titleKey)
         }
 
-        // 3. Fetch from network, write-through to both caches
-        do {
-            let image = try await provider.fetchImage(path: artPath, width: cellWidth, height: cellHeight)
-            cache.set(artPath, image: image)
-            if let disk = diskCache {
-                await disk.store(artPath, image: image)
-            }
-            return ImageWithMetadata(artPath: artPath, image: image, title: item.title, year: item.year, titleKey: item.titleKey)
-        } catch {
-            OSLog.info("ImagePool: Failed to fetch image for \(item.title): \(error.localizedDescription)")
+        // 3. Fetch from network, coalesced across pools so two monitors racing
+        // the same art path issue a single request (U4 — with reservation moved
+        // to display time, pools no longer implicitly dedupe fetches). Then
+        // write-through to both caches.
+        let width = cellWidth
+        let height = cellHeight
+        let image = await ImageRequestCoalescer.shared.image(for: artPath) { [provider] in
+            try? await provider.fetchImage(path: artPath, width: width, height: height)
+        }
+        guard let image = image else {
+            OSLog.info("ImagePool: Failed to fetch image for \(item.title)")
             return nil
         }
+        cache.set(artPath, image: image)
+        if let disk = diskCache {
+            await disk.store(artPath, image: image)
+        }
+        return ImageWithMetadata(artPath: artPath, image: image, title: item.title, year: item.year, titleKey: item.titleKey)
     }
 
     private func refillPool() async {

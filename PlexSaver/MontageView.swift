@@ -76,7 +76,7 @@ class MontageView: ScreenSaverView {
 
         super.init(frame: frame, isPreview: preview)
 
-        instanceNumber = InstanceTracker.shared.registerInstance(self)
+        instanceNumber = InstanceTracker.shared.registerInstance()
         OSLog.info("init (\(instanceNumber)): frame=\(Int(frame.width))x\(Int(frame.height)), isPreview=\(preview)")
 
         self.wantsLayer = true

@@ -11,30 +11,15 @@ class InstanceTracker {
 
     private let queue = DispatchQueue(label: "montage.instance.tracker", qos: .utility)
     private var instanceCounter = 0
-    private var instances: [Int: WeakRef] = [:]
 
     private init() {}
 
-    func registerInstance(_ instance: MontageView) -> Int {
+    /// Returns a stable, monotonically increasing instance number used only to
+    /// disambiguate log lines from concurrent `MontageView` instances.
+    func registerInstance() -> Int {
         return queue.sync {
             instanceCounter += 1
-            instances[instanceCounter] = WeakRef(instance)
             return instanceCounter
         }
-    }
-
-    var totalInstances: Int {
-        return queue.sync {
-            instances = instances.filter { $0.value.value != nil }
-            return instances.count
-        }
-    }
-}
-
-private class WeakRef {
-    weak var value: MontageView?
-
-    init(_ value: MontageView) {
-        self.value = value
     }
 }
