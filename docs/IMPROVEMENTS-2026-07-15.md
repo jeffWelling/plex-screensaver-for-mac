@@ -536,3 +536,64 @@ gains a `stats()` snapshot; `MontageView` renders a `CATextLayer` updated on a
 | 14 step 2 (shared pool) | P2/L | P1-adjacent (as U4 tier 2) | Subsumes starvation, N× fetch waste, and the manifest race in one design |
 
 All other 07-09 priorities stand as written.
+
+---
+
+## Status — 2026-07-15 fix pass
+
+Every item below was implemented and the code builds (`xcodebuild -scheme
+PlexSaver` and `-scheme SaverTest`, Debug, both **BUILD SUCCEEDED**) with the new
+unit suite green (`make test` → 18 tests, 0 failures). Version bumped 0.4.4 →
+0.5.0. Nothing pushed. Items marked **needs-runtime-verification** are correct by
+construction and unit-tested where possible but have a runtime aspect only Jeff
+can confirm (a second monitor, a Jellyfin dashboard, or a lock/unlock cycle).
+
+**U0 verdict: INCONCLUSIVE.** This Mac has a single built-in display, so the 14
+days of `com.montage.Montage` logs are all single-monitor sessions — one PID and
+one MontageView instance each, never overlapping — which can neither confirm nor
+refute the multi-monitor single-process assumption, and log payloads are
+`<private>` so instance numbers aren't readable. The interactive two-monitor test
+isn't runnable here. Per the decision rule, built **U4 tier 1** (correct
+regardless of process model), not the tier-2 shared pool or a file-based
+cross-process registry. Remaining risk: if a future multi-monitor Tahoe setup
+turns out to host each display in its own process, the in-memory registry gives
+no cross-monitor guarantee and a file-based registry would be needed — flagged
+here and in the report.
+
+| # | Item | Outcome | Notes |
+|---|------|---------|-------|
+| U0 | Verify single-process assumption | needs-runtime-verification | INCONCLUSIVE (single-display Mac; logs private). Drove the U4 tier-1 choice. Two-monitor log check still owed. |
+| U1 | Phase-1 bypasses reservation | fixed | `allCachedImages` returns keyed pairs; Phase 1 reserves via registry, shuffles, releases on handoff/teardown. Two-monitor offline no-dup check owed. |
+| U2 | Phase 1→2 handoff dup + snap | fixed | Staggered crossfade takeover (`startRotation(staggered:)`); cross-phase window closed by U1. Two-monitor visual check owed. |
+| U3 | Pool-drain freeze + reservation leak | fixed | Unconditional refill trigger + bounded retry-with-delay; `transitioningCells` guard + re-read outgoing. Two regression tests added. |
+| U4 | Over-reservation starves libs/monitors | fixed (tier 1) | Reserve-at-take + in-flight coalescer + injectable registry. No shared pool (U0 inconclusive). Two-monitor small-library check owed. |
+| U5 | Reservation identity semantics | fixed | Title-level uniqueness: registry reserves artPath + `title|year`; `loadMediaItems` dedupes by (title, year). `.mixed` preserved. Test added. |
+| N1 | deviceId/clientIdentifier prefs domain | fixed | Both persist via `ScreenSaverDefaults(module)` with migration from `.standard`. Jellyfin dashboard single-device check owed. |
+| N2 | No memory budget | fixed | `NSCache.totalCostLimit` in bytes (cost = decoded pixel bytes). 07-09 items 8/10 left out of scope. |
+| N3 | validateConfig ignores library selection | fixed | Optional `libraryId` per cache entry (older manifests decode); Phase 1 filters to selected libraries. |
+| N4 | Grid ignores per-monitor aspect | fixed | Opt-in "Auto-fit columns" (`GridManager.autoColumns`, per display, keeps rows); manual default unchanged; wired into config UI. Portrait/ultrawide visual check owed. |
+| N5 | `exit(0)` willStop hack | needs-runtime-verification | Log history inconclusive (all sessions ran with exit(0) active); kept behavior, added explanatory comment. Tahoe lingering check owed. |
+| R1 | Dead testConnection + error cases | fixed | Removed from protocol, both providers, both clients; deleted never-thrown `.noLibraries`/`.noMediaItems`. Compiler-verified. |
+| R2 | `InstanceTracker.totalInstances` dead | fixed | Deleted the counter dictionary + WeakRef (tier 1 chosen, so not repurposed); kept instance numbering. |
+| R3 | Stale screenshots | fixed | Deleted `screensaver.png`, `preferences.png` (docs commit). |
+| R4 | Version overlay every activation | fixed | Gated behind hidden `ShowVersionOverlay` (off); still shown in SaverTest. |
+| R5 | Parked v0.4.4 commit | fixed | Committed thumbnail + screenshots + pbxproj + README; censor gate passed (`your-server.plex.direct`). TODO file removed. |
+| A1 | Reservation-invariant property test | fixed | SwiftPM test package (`MontageCore`); 18 tests incl. 400-step 2-pool invariant + leak detector, U3 regressions, pure-logic. `make test` + CI wired. |
+| A2 | Debug HUD | fixed | Hidden `ShowDebugHUD` overlay: phase, pool depth/capacity, reserved count, registry total, last refill. Read-only. |
+
+### Owed to Jeff (runtime verification)
+
+- **U0 / U1 / U2 / U4** — attach a second monitor: (U0) with a private-data
+  logging profile, confirm both displays' `init` lines share one PID; (U1/U2)
+  offline (Wi-Fi off, warm cache) confirm no artwork repeats across screens and
+  the Phase 1→2 handoff crossfades rather than snaps; (U4) select a single small
+  library and confirm monitor 2 fills instead of showing "Could not fetch
+  images", with no freeze over time. The `ShowDebugHUD` default makes these
+  readable at a glance.
+- **N1** — Jellyfin Dashboard → Devices: after clearing stale entries and
+  re-authing, confirm exactly one Montage device, stable across config + runtime.
+- **N4** — rotate a monitor to portrait (or use an ultrawide) with Auto-fit on
+  and confirm cell proportions track the source aspect.
+- **N5** — on Tahoe, temporarily gate out `exit(0)`, dismiss the saver, and check
+  `pgrep -fl legacyScreenSaver` for a lingering instance / duplicate MontageView
+  instances on re-entry. If it no longer lingers, the hack can be dropped.
