@@ -11,27 +11,44 @@ struct ImageWithMetadata {
     let image: NSImage
     let title: String
     let year: Int?
+    /// `(title, year)` identity key for title-level uniqueness (U5).
+    let titleKey: String
 }
 
-/// Process-wide reservation of art paths. Multiple `ImagePool` instances run
-/// concurrently on multi-monitor setups (one per `MontageView`); delegating
-/// reservation to this shared actor prevents the same fanart from appearing
-/// on two monitors at the same moment.
+/// Process-wide reservation of media identity. Multiple `ImagePool` instances
+/// run concurrently on multi-monitor setups (one per `MontageView`); delegating
+/// reservation to this shared actor prevents the same media from appearing on
+/// two monitors at the same moment.
+///
+/// Two independent constraints are enforced (U5, title-level uniqueness):
+/// `artPath` (never the same artwork twice) and `titleKey` (never the same movie
+/// twice, even as poster on one screen and fanart on another, or the same title
+/// drawn from two libraries). A reservation succeeds only if both are free and
+/// releases both together. `titleKey` is optional: the cached Phase-1 path has
+/// no titles, so it reserves on artwork alone.
 actor ReservationRegistry {
     static let shared = ReservationRegistry()
-    private var reserved: Set<String> = []
+    private var reservedArtPaths: Set<String> = []
+    private var reservedTitleKeys: Set<String> = []
 
-    /// Reserve `artPath` if available. Returns true iff this call newly reserved
-    /// it (caller is now responsible for releasing).
-    func reserve(_ artPath: String) -> Bool {
-        if reserved.contains(artPath) { return false }
-        reserved.insert(artPath)
+    /// Reserve `artPath` (and, when provided, `titleKey`) iff both are free.
+    /// Returns true iff this call newly reserved them (caller must release).
+    func reserve(artPath: String, titleKey: String? = nil) -> Bool {
+        if reservedArtPaths.contains(artPath) { return false }
+        if let titleKey, reservedTitleKeys.contains(titleKey) { return false }
+        reservedArtPaths.insert(artPath)
+        if let titleKey { reservedTitleKeys.insert(titleKey) }
         return true
     }
 
-    func release(_ artPath: String) {
-        reserved.remove(artPath)
+    func release(artPath: String, titleKey: String? = nil) {
+        reservedArtPaths.remove(artPath)
+        if let titleKey { reservedTitleKeys.remove(titleKey) }
     }
+
+    /// Number of art paths currently reserved. Read-only; used by the debug HUD
+    /// (A2) and the leak-detector test (A1).
+    var count: Int { reservedArtPaths.count }
 }
 
 actor ImagePool {
@@ -57,11 +74,12 @@ actor ImagePool {
     /// improving.
     private static let maxRefillFailures = 3
     private static let refillRetryDelayNanos: UInt64 = 30 * 1_000_000_000
-    /// Art paths this pool has reserved (via `ReservationRegistry.shared`) but
-    /// has not yet released. Tracked locally so `stop()` can return every one
-    /// of them to the registry on teardown — including paths held by on-screen
-    /// cells, whose release is normally orchestrated by `GridManager`.
-    private var reservedArtPaths: Set<String> = []
+    /// Art paths this pool has reserved (via the registry) but not yet released,
+    /// mapped to the title key reserved alongside each so both can be released
+    /// together. Tracked locally so `stop()` can return every reservation on
+    /// teardown — including paths held by on-screen cells, whose release is
+    /// normally orchestrated by `GridManager`.
+    private var reservedTitleKeyByArtPath: [String: String] = [:]
 
     init(provider: any MediaProvider, imageSource: ImageSourceType, cellWidth: Int, cellHeight: Int, poolSize: Int, diskCache: DiskCache? = nil) {
         self.provider = provider
@@ -95,8 +113,15 @@ actor ImagePool {
             OSLog.info("ImagePool: Failed to load media items: \(error.localizedDescription)")
         }
 
-        // Filter to items that have art for our source type
-        mediaItems = allItems.filter { $0.artPath(for: imageSource) != nil }
+        // Filter to items that have art for our source type, and dedupe by
+        // title identity (U5): the same movie present in two libraries (e.g.
+        // Movies + 4K) has different ids/art paths but is a visual duplicate, so
+        // keep only the first occurrence of each (title, year).
+        var seenTitleKeys = Set<String>()
+        mediaItems = allItems.filter { item in
+            guard item.artPath(for: imageSource) != nil else { return false }
+            return seenTitleKeys.insert(item.titleKey).inserted
+        }
         OSLog.info("ImagePool: Loaded \(mediaItems.count) media items with art")
 
         reshuffleIndices()
@@ -143,18 +168,19 @@ actor ImagePool {
         pool.removeAll()
         cache.clear()
 
-        let toRelease = reservedArtPaths
-        reservedArtPaths.removeAll()
-        for path in toRelease {
-            await ReservationRegistry.shared.release(path)
+        let held = reservedTitleKeyByArtPath
+        reservedTitleKeyByArtPath.removeAll()
+        for (artPath, titleKey) in held {
+            await ReservationRegistry.shared.release(artPath: artPath, titleKey: titleKey)
         }
     }
 
-    /// Release a previously-reserved art path so another cell can show it again.
-    /// Called by `GridManager` after a cell's outgoing image is no longer visible.
+    /// Release a previously-reserved art path (and its paired title key) so
+    /// another cell can show it again. Called by `GridManager` after a cell's
+    /// outgoing image is no longer visible.
     func release(artPath: String) async {
-        reservedArtPaths.remove(artPath)
-        await ReservationRegistry.shared.release(artPath)
+        let titleKey = reservedTitleKeyByArtPath.removeValue(forKey: artPath)
+        await ReservationRegistry.shared.release(artPath: artPath, titleKey: titleKey)
     }
 
     // MARK: - Private
@@ -186,8 +212,9 @@ actor ImagePool {
 
             guard let artPath = item.artPath(for: imageSource) else { continue }
 
-            if await ReservationRegistry.shared.reserve(artPath) {
-                reservedArtPaths.insert(artPath)
+            // Reserve on both artwork and title identity (U5).
+            if await ReservationRegistry.shared.reserve(artPath: artPath, titleKey: item.titleKey) {
+                reservedTitleKeyByArtPath[artPath] = item.titleKey
                 return (item, artPath)
             }
         }
@@ -197,28 +224,28 @@ actor ImagePool {
 
     private func fetchNextImage() async -> ImageWithMetadata? {
         guard let (item, artPath) = await nextMediaItem() else { return nil }
-        // artPath is reserved from this point on.
+        // artPath (and its title key) are reserved from this point on.
 
         if let result = await loadImage(for: item, artPath: artPath) {
             return result
         }
 
-        // Fetch failed — release the reservation so this path can be tried again.
-        reservedArtPaths.remove(artPath)
-        await ReservationRegistry.shared.release(artPath)
+        // Fetch failed — release the reservation so this item can be tried again.
+        let titleKey = reservedTitleKeyByArtPath.removeValue(forKey: artPath)
+        await ReservationRegistry.shared.release(artPath: artPath, titleKey: titleKey)
         return nil
     }
 
     private func loadImage(for item: MediaItem, artPath: String) async -> ImageWithMetadata? {
         // 1. Check in-memory cache
         if let cached = cache.get(artPath) {
-            return ImageWithMetadata(artPath: artPath, image: cached, title: item.title, year: item.year)
+            return ImageWithMetadata(artPath: artPath, image: cached, title: item.title, year: item.year, titleKey: item.titleKey)
         }
 
         // 2. Check disk cache
         if let disk = diskCache, let cached = await disk.get(artPath) {
             cache.set(artPath, image: cached)
-            return ImageWithMetadata(artPath: artPath, image: cached, title: item.title, year: item.year)
+            return ImageWithMetadata(artPath: artPath, image: cached, title: item.title, year: item.year, titleKey: item.titleKey)
         }
 
         // 3. Fetch from network, write-through to both caches
@@ -228,7 +255,7 @@ actor ImagePool {
             if let disk = diskCache {
                 await disk.store(artPath, image: image)
             }
-            return ImageWithMetadata(artPath: artPath, image: image, title: item.title, year: item.year)
+            return ImageWithMetadata(artPath: artPath, image: image, title: item.title, year: item.year, titleKey: item.titleKey)
         } catch {
             OSLog.info("ImagePool: Failed to fetch image for \(item.title): \(error.localizedDescription)")
             return nil

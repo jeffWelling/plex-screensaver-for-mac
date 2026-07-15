@@ -28,6 +28,15 @@ struct MediaItem {
             return artPaths[source]
         }
     }
+
+    /// Identity key for title-level uniqueness (U5). Two entries that resolve to
+    /// the same `(title, year)` — e.g. the same movie in a Movies and a 4K
+    /// library, or the same movie shown as poster and fanart in `.mixed` — share
+    /// this key so the registry treats them as one item and never displays both
+    /// at once. Case-folded so trivial casing differences don't defeat it.
+    var titleKey: String {
+        "\(title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())|\(year.map(String.init) ?? "")"
+    }
 }
 
 /// The type of media provider

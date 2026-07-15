@@ -530,7 +530,7 @@ class MontageView: ScreenSaverView {
                 scanIndex += 1
                 scanned += 1
                 if reserved.contains(pair.key) { continue }
-                if await ReservationRegistry.shared.reserve(pair.key) {
+                if await ReservationRegistry.shared.reserve(artPath: pair.key) {
                     reserved.insert(pair.key)
                     assignments.append((cellIndex, pair.image, pair.key))
                     break
@@ -588,7 +588,7 @@ class MontageView: ScreenSaverView {
             for pair in snap.candidates {
                 if pair.key == snap.outgoingKey { continue }
                 if snap.reserved.contains(pair.key) { continue }
-                if await ReservationRegistry.shared.reserve(pair.key) {
+                if await ReservationRegistry.shared.reserve(artPath: pair.key) {
                     chosen = pair
                     break
                 }
@@ -598,7 +598,7 @@ class MontageView: ScreenSaverView {
             await MainActor.run {
                 guard self.isUsingCachedImages, let gm = self.gridManager, snap.cellIndex < gm.cells.count else {
                     // Handoff/teardown raced us — return the reservation we took.
-                    Task { await ReservationRegistry.shared.release(winner.key) }
+                    Task { await ReservationRegistry.shared.release(artPath: winner.key) }
                     return
                 }
                 gm.cells[snap.cellIndex].displayImage(winner.image, transitionDuration: 1.0)
@@ -608,7 +608,7 @@ class MontageView: ScreenSaverView {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
                         guard let self = self else { return }
                         self.reservedCachedKeys.remove(outgoing)
-                        Task { await ReservationRegistry.shared.release(outgoing) }
+                        Task { await ReservationRegistry.shared.release(artPath: outgoing) }
                     }
                 }
             }
@@ -628,7 +628,7 @@ class MontageView: ScreenSaverView {
         if !toRelease.isEmpty {
             Task {
                 for key in toRelease {
-                    await ReservationRegistry.shared.release(key)
+                    await ReservationRegistry.shared.release(artPath: key)
                 }
             }
         }
