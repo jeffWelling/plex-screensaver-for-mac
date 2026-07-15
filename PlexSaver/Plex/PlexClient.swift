@@ -24,11 +24,6 @@ actor PlexClient {
 
     // MARK: - Public API
 
-    func testConnection() async throws -> Bool {
-        let _ = try await fetchLibraries()
-        return true
-    }
-
     func fetchLibraries() async throws -> [PlexLibrary] {
         let data = try await request(path: "/library/sections")
         let response = try JSONDecoder().decode(PlexLibrarySectionsResponse.self, from: data)
@@ -103,16 +98,12 @@ enum PlexError: LocalizedError {
     case invalidURL
     case httpError(Int)
     case invalidImageData
-    case noLibraries
-    case noMediaItems
 
     var errorDescription: String? {
         switch self {
         case .invalidURL: return "Invalid Plex server URL"
         case .httpError(let code): return "HTTP error \(code)"
         case .invalidImageData: return "Invalid image data received"
-        case .noLibraries: return "No libraries found on server"
-        case .noMediaItems: return "No media items found"
         }
     }
 }

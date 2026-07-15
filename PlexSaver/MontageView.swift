@@ -269,6 +269,11 @@ class MontageView: ScreenSaverView {
     // MARK: - Version Overlay
 
     private func showVersionOverlay() {
+        // Hidden by default (R4): a version pill that flashed on every monitor on
+        // every activation is noise for a screensaver. Still shown in the
+        // SaverTest app (useful during development) and when the ShowVersionOverlay
+        // debug default is set.
+        guard InstanceTracker.isRunningInApp || Preferences.showVersionOverlay else { return }
         guard let rootLayer = self.layer else { return }
 
         let bundle = Bundle(for: MontageView.self)
@@ -697,6 +702,23 @@ class MontageView: ScreenSaverView {
     private func handleWillStop() {
         OSLog.info("handleWillStop (\(instanceNumber)): scheduling exit")
         stopAnimation()
+        // Force the host process to exit ~2s after dismissal. This is the known
+        // community workaround for legacyScreenSaver lingering after the saver is
+        // dismissed — a stale instance kept running behind the lock screen, which
+        // on re-entry showed duplicate MontageView instances and raced the disk
+        // manifest.
+        //
+        // N5 (2026-07-15) tried to verify whether Tahoe still needs it: the local
+        // screensaver log history over 14 days shows only clean, single-process,
+        // non-overlapping sessions — but every one ran with this exit(0) already
+        // active, so the counterfactual (does it linger WITHOUT the hack?) can't
+        // be observed from logs, and the interactive multi-monitor test isn't
+        // runnable in this environment. Verdict: inconclusive, so the hack stays.
+        //
+        // It is gated in init to register only for the real saver (non-app,
+        // non-preview), so it never fires in SaverTest or the System Settings
+        // preview. Manifest writes are atomic (DiskCache.saveManifest), so a hard
+        // exit mid-teardown cannot corrupt them.
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
             exit(0)
         }

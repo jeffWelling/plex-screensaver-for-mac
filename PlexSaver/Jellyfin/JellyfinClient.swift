@@ -19,12 +19,6 @@ actor JellyfinClient {
         self.session = URLSession.shared
     }
 
-    /// Test connectivity by fetching libraries
-    func testConnection() async throws -> Bool {
-        _ = try await fetchLibraries()
-        return true
-    }
-
     /// Fetch available media libraries (views)
     func fetchLibraries() async throws -> [JellyfinLibrary] {
         let data = try await request(path: "/Users/\(userId)/Views")
@@ -127,8 +121,6 @@ enum JellyfinError: LocalizedError {
     case httpError(Int)
     case invalidImageData
     case authenticationFailed
-    case noLibraries
-    case noMediaItems
 
     var errorDescription: String? {
         switch self {
@@ -136,8 +128,6 @@ enum JellyfinError: LocalizedError {
         case .httpError(let code): return "Jellyfin HTTP error: \(code)"
         case .invalidImageData: return "Invalid image data from Jellyfin"
         case .authenticationFailed: return "Jellyfin authentication failed"
-        case .noLibraries: return "No libraries found on Jellyfin server"
-        case .noMediaItems: return "No media items found"
         }
     }
 }

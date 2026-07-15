@@ -18,7 +18,4 @@ protocol MediaProvider: Actor {
 
     /// Fetch an image at the given path, scaled to the given dimensions
     func fetchImage(path: String, width: Int, height: Int) async throws -> NSImage
-
-    /// Test connectivity to the server
-    func testConnection() async throws -> Bool
 }

@@ -64,6 +64,12 @@ struct Preferences {
     @SimpleStorage(key: "TitleDisplayDuration", defaultValue: 2.0)
     static var titleDisplayDuration: Double
 
+    /// Show the version pill on every activation (R4). Off by default — it's
+    /// noise on a screensaver — but always shown in the SaverTest app. Hidden
+    /// preference; set with `defaults` for troubleshooting.
+    @SimpleStorage(key: "ShowVersionOverlay", defaultValue: false)
+    static var showVersionOverlay: Bool
+
     // MARK: - Provider Selection
 
     @Storage(key: "ProviderType", defaultValue: .plex)

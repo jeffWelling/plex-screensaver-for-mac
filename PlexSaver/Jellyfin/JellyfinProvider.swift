@@ -28,8 +28,4 @@ actor JellyfinProvider: MediaProvider {
     func fetchImage(path: String, width: Int, height: Int) async throws -> NSImage {
         return try await client.fetchImage(path: path, width: width, height: height)
     }
-
-    func testConnection() async throws -> Bool {
-        return try await client.testConnection()
-    }
 }
