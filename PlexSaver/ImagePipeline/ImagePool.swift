@@ -15,6 +15,14 @@ struct ImageWithMetadata {
     let titleKey: String
 }
 
+/// Read-only snapshot of a pool's state for the debug HUD (A2).
+struct PoolStats {
+    let poolDepth: Int
+    let poolCapacity: Int
+    let reservedByThisPool: Int
+    let lastRefillResult: String
+}
+
 /// Process-wide reservation of media identity. Multiple `ImagePool` instances
 /// run concurrently on multi-monitor setups (one per `MontageView`); delegating
 /// reservation to this shared actor prevents the same media from appearing on
@@ -91,6 +99,8 @@ actor ImagePool {
     private let poolSize: Int
     private var isRefilling = false
     private var isStopped = false
+    /// Human-readable outcome of the most recent refill pass, for the debug HUD.
+    private var lastRefillResult = "—"
 
     /// Consecutive failed fetches inside a single `refillPool()` pass before it
     /// backs off, and how long it waits before one more probe. Bounds retries so
@@ -232,6 +242,13 @@ actor ImagePool {
         await registry.release(artPath: artPath, titleKey: titleKey)
     }
 
+    /// Read-only snapshot for the debug HUD (A2).
+    func stats() -> PoolStats {
+        PoolStats(poolDepth: pool.count, poolCapacity: poolSize,
+                  reservedByThisPool: reservedTitleKeyByArtPath.count,
+                  lastRefillResult: lastRefillResult)
+    }
+
     // MARK: - Private
 
     private func reshuffleIndices() {
@@ -305,7 +322,10 @@ actor ImagePool {
     private func refillPool() async {
         guard !isRefilling else { return }
         isRefilling = true
-        defer { isRefilling = false }
+        defer {
+            isRefilling = false
+            lastRefillResult = isStopped ? "stopped" : "\(pool.count)/\(poolSize)"
+        }
 
         var consecutiveFailures = 0
 

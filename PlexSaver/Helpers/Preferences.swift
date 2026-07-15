@@ -70,6 +70,11 @@ struct Preferences {
     @SimpleStorage(key: "ShowVersionOverlay", defaultValue: false)
     static var showVersionOverlay: Bool
 
+    /// Show the read-only debug HUD (pool depth, reservation counts, last refill)
+    /// on every display (A2). Off by default; hidden preference set via `defaults`.
+    @SimpleStorage(key: "ShowDebugHUD", defaultValue: false)
+    static var showDebugHUD: Bool
+
     // MARK: - Provider Selection
 
     @Storage(key: "ProviderType", defaultValue: .plex)

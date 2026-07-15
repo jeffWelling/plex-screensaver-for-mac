@@ -25,6 +25,8 @@ class MontageView: ScreenSaverView {
     private var statusLayer: CATextLayer?
     private var statusBackdropLayer: CALayer?
     private var versionLayer: CATextLayer?
+    private var debugHUDLayer: CATextLayer?
+    private var debugHUDTimer: Timer?
 
     // Cached-image rotation (Phase 1, before ImagePool takes over). Each cached
     // image carries its art-path key so Phase 1 can reserve through the shared
@@ -131,6 +133,7 @@ class MontageView: ScreenSaverView {
         setupGrid()
         showVersionOverlay()
         startImagePipeline()
+        startDebugHUDIfEnabled()
     }
 
     override func stopAnimation() {
@@ -150,6 +153,7 @@ class MontageView: ScreenSaverView {
 
         diskCache = nil
         removeStatusLayer()
+        stopDebugHUD()
     }
 
     override func draw(_ rect: NSRect) {
@@ -309,6 +313,78 @@ class MontageView: ScreenSaverView {
                 self?.versionLayer = nil
             }
         }
+    }
+
+    // MARK: - Debug HUD (A2)
+
+    /// Read-only overlay showing pool depth, this view's reserved count, the
+    /// global registry size, and the last refill result. Every uniqueness bug in
+    /// the review survived because the invariant was invisible at runtime; this
+    /// turns "stare at two screens" into "read two numbers." Hidden behind the
+    /// ShowDebugHUD default.
+    private func startDebugHUDIfEnabled() {
+        guard Preferences.showDebugHUD, let rootLayer = self.layer else { return }
+
+        let textLayer = CATextLayer()
+        textLayer.contentsScale = backingScale
+        textLayer.fontSize = 11
+        textLayer.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+        textLayer.foregroundColor = CGColor(gray: 0.95, alpha: 0.95)
+        textLayer.backgroundColor = CGColor(gray: 0, alpha: 0.55)
+        textLayer.alignmentMode = .left
+        textLayer.isWrapped = true
+        rootLayer.addSublayer(textLayer)
+        debugHUDLayer = textLayer
+
+        let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
+            self?.updateDebugHUD()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        debugHUDTimer = timer
+        updateDebugHUD()
+    }
+
+    private func updateDebugHUD() {
+        guard debugHUDLayer != nil else { return }
+        // Snapshot main-thread state, then read the actors off-main.
+        let pool = imagePool
+        let usingCached = isUsingCachedImages
+        let cachedReserved = reservedCachedKeys.count
+        let inst = instanceNumber
+
+        Task { [weak self] in
+            let registrySize = await ReservationRegistry.shared.count
+            let stats = await pool?.stats()
+            await MainActor.run {
+                guard let self = self, let layer = self.debugHUDLayer else { return }
+                var lines = ["Montage HUD · inst \(inst)"]
+                if usingCached {
+                    lines.append("phase 1 (cached)")
+                    lines.append("cached reserved: \(cachedReserved)")
+                } else if let s = stats {
+                    lines.append("phase 2 (pool)")
+                    lines.append("pool: \(s.poolDepth)/\(s.poolCapacity)")
+                    lines.append("reserved (this pool): \(s.reservedByThisPool)")
+                    lines.append("last refill: \(s.lastRefillResult)")
+                } else {
+                    lines.append("phase: starting…")
+                }
+                lines.append("registry total: \(registrySize)")
+
+                CATransaction.begin()
+                CATransaction.setAnimationDuration(0)
+                layer.frame = CGRect(x: 8, y: self.bounds.height - 100, width: 340, height: 92)
+                layer.string = lines.joined(separator: "\n")
+                CATransaction.commit()
+            }
+        }
+    }
+
+    private func stopDebugHUD() {
+        debugHUDTimer?.invalidate()
+        debugHUDTimer = nil
+        debugHUDLayer?.removeFromSuperlayer()
+        debugHUDLayer = nil
     }
 
     // MARK: - Setup
@@ -694,6 +770,8 @@ class MontageView: ScreenSaverView {
         if isAnimationStarted {
             setupGrid()
             startImagePipeline()
+            stopDebugHUD()
+            startDebugHUDIfEnabled()
         }
     }
 
@@ -734,6 +812,7 @@ class MontageView: ScreenSaverView {
     deinit {
         stopCachedRotation()
         gridManager?.stopRotation()
+        debugHUDTimer?.invalidate()
         if let observer = willStopObserver {
             DistributedNotificationCenter.default().removeObserver(observer)
         }
