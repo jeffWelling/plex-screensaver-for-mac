@@ -2,7 +2,7 @@
 
 A macOS screensaver that connects to your Plex or Jellyfin media server and displays a rotating mosaic of media artwork — the "guess the movie" experience.
 
-![Montage in action](docs/screenshots/screensaver.png)
+![Montage in action](docs/screenshots/montage-grid.png)
 
 ## Features
 
@@ -18,9 +18,15 @@ A macOS screensaver that connects to your Plex or Jellyfin media server and disp
 
 ## Screenshots
 
-| Screensaver | Preferences |
+![Montage running as a screensaver — a 3x3 grid of fanart with a title-reveal pill](docs/screenshots/montage-grid.png)
+
+The rotating grid, mid-reveal.
+
+| Plex | Jellyfin |
 |:-----------:|:-----------:|
-| ![Screensaver](docs/screenshots/screensaver.png) | ![Preferences](docs/screenshots/preferences.png) |
+| ![Plex preferences tab](docs/screenshots/preferences-plex.png) | ![Jellyfin preferences tab](docs/screenshots/preferences-jellyfin.png) |
+
+Preferences for each provider.
 
 ## Installation
 
