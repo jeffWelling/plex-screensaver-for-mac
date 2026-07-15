@@ -398,7 +398,9 @@ class MontageView: ScreenSaverView {
 
             if cachedCount > 0 {
                 let totalCells = await MainActor.run { self.gridManager?.cells.count ?? 12 }
-                let images = await cache.allCachedImages(limit: totalCells * 3)
+                // Filter the cached phase to the currently-selected libraries so
+                // art from a just-deselected library doesn't reappear (N3).
+                let images = await cache.allCachedImages(limit: totalCells * 3, libraryIds: Preferences.selectedLibraryIds)
 
                 if !images.isEmpty {
                     await self.setupCachedPhase(images: images, cacheFresh: cacheFresh, providerName: providerName)

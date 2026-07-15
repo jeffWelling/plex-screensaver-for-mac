@@ -152,8 +152,18 @@ actor DiskCache {
     /// Load up to `limit` cached images (most recently accessed first), each
     /// paired with its art-path key so the caller can route Phase-1 selection
     /// through `ReservationRegistry` (see U1) and dedupe across monitors.
-    func allCachedImages(limit: Int) -> [(key: String, image: NSImage)] {
-        let sorted = manifest.entries.sorted { $0.lastAccess > $1.lastAccess }
+    ///
+    /// When `libraryIds` is non-empty, only images recorded as belonging to one
+    /// of those libraries are returned (N3). Entries with no recorded library id
+    /// (legacy manifests written before N3) are always included, since their
+    /// origin is unknown and excluding them would blank the cached phase.
+    func allCachedImages(limit: Int, libraryIds: [String] = []) -> [(key: String, image: NSImage)] {
+        let selected = Set(libraryIds)
+        let sorted = manifest.entries
+            .filter { entry in
+                selected.isEmpty || entry.libraryId == nil || selected.contains(entry.libraryId!)
+            }
+            .sorted { $0.lastAccess > $1.lastAccess }
         var results: [(key: String, image: NSImage)] = []
 
         for entry in sorted.prefix(limit) {
@@ -168,8 +178,9 @@ actor DiskCache {
 
     // MARK: - Write
 
-    /// Store an image in the cache under the given art path key.
-    func store(_ key: String, image: NSImage) {
+    /// Store an image in the cache under the given art path key, optionally
+    /// recording the library it came from (N3).
+    func store(_ key: String, image: NSImage, libraryId: String? = nil) {
         guard let tiffData = image.tiffRepresentation,
               let rep = NSBitmapImageRep(data: tiffData),
               let jpegData = rep.representation(using: .jpeg, properties: [.compressionFactor: 0.85]) else {
@@ -188,8 +199,11 @@ actor DiskCache {
 
         let size = Int64(jpegData.count)
 
-        // Remove old entry for this key if it exists
+        // Remove old entry for this key if it exists. Preserve a previously
+        // recorded library id if this store didn't supply one.
+        var resolvedLibraryId = libraryId
         if let idx = manifest.entries.firstIndex(where: { $0.key == key }) {
+            if resolvedLibraryId == nil { resolvedLibraryId = manifest.entries[idx].libraryId }
             manifest.totalSize -= manifest.entries[idx].size
             manifest.entries.remove(at: idx)
         }
@@ -198,7 +212,8 @@ actor DiskCache {
             key: key,
             filename: filename,
             size: size,
-            lastAccess: Date()
+            lastAccess: Date(),
+            libraryId: resolvedLibraryId
         ))
         manifest.totalSize += size
 
@@ -303,4 +318,7 @@ private struct CacheEntry: Codable {
     let filename: String
     let size: Int64
     var lastAccess: Date
+    /// Originating library id (N3). Optional so manifests written before this
+    /// field existed still decode (absent key → nil).
+    var libraryId: String? = nil
 }

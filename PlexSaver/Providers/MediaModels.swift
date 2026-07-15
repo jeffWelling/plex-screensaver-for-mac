@@ -18,6 +18,11 @@ struct MediaItem {
     let title: String
     let year: Int?
     let artPaths: [ImageSourceType: String]
+    /// Originating library id, tagged by `ImagePool.loadMediaItems` so the disk
+    /// cache can record which library each image came from and Phase 1 can filter
+    /// to the currently-selected libraries (N3). Defaults to nil for callers that
+    /// don't know it (the provider converters).
+    var libraryId: String? = nil
 
     /// Returns the art path for the given source type, or a random available path for .mixed
     func artPath(for source: ImageSourceType) -> String? {

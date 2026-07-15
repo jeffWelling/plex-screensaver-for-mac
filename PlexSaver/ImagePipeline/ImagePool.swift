@@ -112,7 +112,12 @@ actor ImagePool {
         self.cellWidth = cellWidth
         self.cellHeight = cellHeight
         self.poolSize = poolSize
-        self.cache = ImageCache(maxSize: poolSize * 2)
+        // Cap the in-memory cache by both count and bytes (N2): the byte budget
+        // is the count limit expressed at this pool's cell resolution, so it
+        // never shrinks below the pool's working set but does put a hard ceiling
+        // on memory when images are larger than estimated.
+        let bytesPerImage = max(1, cellWidth * cellHeight * 4)
+        self.cache = ImageCache(countLimit: poolSize * 2, totalCostLimit: bytesPerImage * poolSize * 2)
         self.diskCache = diskCache
         self.registry = registry
     }
@@ -126,12 +131,14 @@ actor ImagePool {
                 // Fetch all libraries
                 let libraries = try await provider.fetchLibraries()
                 for library in libraries {
-                    let items = try await provider.fetchItems(libraryId: library.id)
+                    var items = try await provider.fetchItems(libraryId: library.id)
+                    for i in items.indices { items[i].libraryId = library.id }
                     allItems.append(contentsOf: items)
                 }
             } else {
                 for id in libraryIds {
-                    let items = try await provider.fetchItems(libraryId: id)
+                    var items = try await provider.fetchItems(libraryId: id)
+                    for i in items.indices { items[i].libraryId = id }
                     allItems.append(contentsOf: items)
                 }
             }
@@ -290,7 +297,7 @@ actor ImagePool {
         }
         cache.set(artPath, image: image)
         if let disk = diskCache {
-            await disk.store(artPath, image: image)
+            await disk.store(artPath, image: image, libraryId: item.libraryId)
         }
         return ImageWithMetadata(artPath: artPath, image: image, title: item.title, year: item.year, titleKey: item.titleKey)
     }
