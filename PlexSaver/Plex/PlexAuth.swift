@@ -9,6 +9,7 @@
 
 import Foundation
 import AppKit
+import ScreenSaver
 import os.log
 
 struct PlexPin: Decodable {
@@ -47,13 +48,28 @@ struct PlexServer: Identifiable {
 
 actor PlexAuth {
     private static let clientIdentifier: String = {
-        // Persist a stable client ID per machine
+        // Persist a stable client ID per machine in the shared module preference
+        // domain so the config-time flows (PIN + discovery) see one identifier
+        // across host processes. Migrates a legacy value from the host's standard
+        // domain on first read (N1 — same domain-split hygiene as the Jellyfin
+        // DeviceId; Plex's is only used during config so the impact is minor).
         let key = "PlexClientIdentifier"
-        if let existing = UserDefaults.standard.string(forKey: key) {
+        let store = ScreenSaverDefaults(forModuleWithName: AppConstants.module)
+        if let existing = store?.string(forKey: key), !existing.isEmpty {
             return existing
         }
+        if let legacy = UserDefaults.standard.string(forKey: key), !legacy.isEmpty {
+            store?.set(legacy, forKey: key)
+            store?.synchronize()
+            return legacy
+        }
         let newID = UUID().uuidString
-        UserDefaults.standard.set(newID, forKey: key)
+        if let store {
+            store.set(newID, forKey: key)
+            store.synchronize()
+        } else {
+            UserDefaults.standard.set(newID, forKey: key)
+        }
         return newID
     }()
 

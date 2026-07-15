@@ -4,20 +4,40 @@
 //
 
 import Foundation
+import ScreenSaver
 
 /// Handles Jellyfin username/password authentication
 actor JellyfinAuth {
-    /// Persistent device identifier (stored in UserDefaults).
-    /// A `lazy static let` so the generate-and-store happens exactly once even
-    /// under concurrent first access (two threads could otherwise each mint and
-    /// persist a different UUID).
+    /// Persistent device identifier, stored in the shared module preference
+    /// domain (`ScreenSaverDefaults(forModuleWithName:)`) rather than the host
+    /// process's `UserDefaults.standard`. The config sheet runs in System
+    /// Settings and the saver in legacyScreenSaver; persisting to `.standard`
+    /// minted a *different* DeviceId in each host, so the token issued against
+    /// the config host's id was presented at runtime with the saver host's id —
+    /// producing duplicate Jellyfin device registrations (N1). A legacy value in
+    /// `.standard` is migrated on first read.
+    ///
+    /// A `static let` so the generate-and-store happens exactly once even under
+    /// concurrent first access.
     static let deviceId: String = {
         let key = "JellyfinDeviceId"
-        if let existing = UserDefaults.standard.string(forKey: key) {
+        let store = ScreenSaverDefaults(forModuleWithName: AppConstants.module)
+        if let existing = store?.string(forKey: key), !existing.isEmpty {
             return existing
         }
+        // Migrate a legacy value written to the host's standard domain.
+        if let legacy = UserDefaults.standard.string(forKey: key), !legacy.isEmpty {
+            store?.set(legacy, forKey: key)
+            store?.synchronize()
+            return legacy
+        }
         let newId = UUID().uuidString
-        UserDefaults.standard.set(newId, forKey: key)
+        if let store {
+            store.set(newId, forKey: key)
+            store.synchronize()
+        } else {
+            UserDefaults.standard.set(newId, forKey: key)
+        }
         return newId
     }()
 
