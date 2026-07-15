@@ -69,7 +69,4 @@ bump-major:
 	echo "Bumped: $(VERSION) ($(BUILD)) -> $$NEW ($$NEWBUILD)"
 
 test:
-	xcodebuild -scheme SaverTest -configuration Debug build
-	@echo ""
-	@echo "MontageTest built. Open in Xcode to run, or:"
-	@echo "  open $$(find '$(DERIVED_DATA)' -path '*/Build/Products/Debug/SaverTest.app' -maxdepth 5 2>/dev/null | head -1)"
+	swift test

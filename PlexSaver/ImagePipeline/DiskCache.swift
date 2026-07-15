@@ -109,7 +109,8 @@ actor DiskCache {
 
     /// Normalize server URL so cosmetic differences (trailing slash, case in
     /// the scheme/host) don't look like a config change and invalidate the cache.
-    private static func normalizeServerURL(_ url: String) -> String {
+    /// Internal (not private) so it is unit-testable (A1).
+    static func normalizeServerURL(_ url: String) -> String {
         var trimmed = url.trimmingCharacters(in: .whitespacesAndNewlines)
         while trimmed.hasSuffix("/") {
             trimmed = String(trimmed.dropLast())

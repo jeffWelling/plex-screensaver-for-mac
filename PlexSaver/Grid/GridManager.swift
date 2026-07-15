@@ -46,19 +46,32 @@ class GridManager {
         // crossfade. If there is no room, disable the reveal rather than forcing
         // a duration that overruns the interval and causes overlapping
         // transitions.
-        let availableForReveal = rotationInterval - crossfadeDuration
-        if showTitleReveal && availableForReveal > 0.3 {
-            self.showTitleReveal = true
-            self.titleDisplayDuration = min(titleDisplayDuration, availableForReveal)
-        } else {
-            self.showTitleReveal = false
-            self.titleDisplayDuration = 0
-        }
+        let resolved = Self.resolveReveal(
+            rotationInterval: rotationInterval,
+            crossfadeDuration: crossfadeDuration,
+            showTitleReveal: showTitleReveal,
+            titleDisplayDuration: titleDisplayDuration
+        )
+        self.showTitleReveal = resolved.show
+        self.titleDisplayDuration = resolved.duration
 
         rootLayer.frame = frame
         rootLayer.backgroundColor = CGColor.black
 
         buildGrid(frame: frame)
+    }
+
+    /// Resolve whether the title reveal fits within the rotation period and, if
+    /// so, its clamped duration. Pure so it can be unit-tested (A1): the reveal is
+    /// disabled unless there is more than 0.3s of headroom after the crossfade,
+    /// and its duration never exceeds that headroom.
+    static func resolveReveal(rotationInterval: TimeInterval, crossfadeDuration: TimeInterval, showTitleReveal: Bool, titleDisplayDuration: TimeInterval) -> (show: Bool, duration: TimeInterval) {
+        let availableForReveal = rotationInterval - crossfadeDuration
+        if showTitleReveal && availableForReveal > 0.3 {
+            return (true, min(titleDisplayDuration, availableForReveal))
+        } else {
+            return (false, 0)
+        }
     }
 
     /// Columns that best match `targetAspect` for a display of the given size and
