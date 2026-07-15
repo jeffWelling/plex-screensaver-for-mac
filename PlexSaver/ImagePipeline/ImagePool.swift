@@ -49,6 +49,14 @@ actor ImagePool {
     private let poolSize: Int
     private var isRefilling = false
     private var isStopped = false
+
+    /// Consecutive failed fetches inside a single `refillPool()` pass before it
+    /// backs off, and how long it waits before one more probe. Bounds retries so
+    /// a dead server or fully-reserved library is not hammered, while still
+    /// letting rotation recover within ~one retry interval of conditions
+    /// improving.
+    private static let maxRefillFailures = 3
+    private static let refillRetryDelayNanos: UInt64 = 30 * 1_000_000_000
     /// Art paths this pool has reserved (via `ReservationRegistry.shared`) but
     /// has not yet released. Tracked locally so `stop()` can return every one
     /// of them to the registry on teardown — including paths held by on-screen
@@ -114,11 +122,14 @@ actor ImagePool {
 
     /// Take an image from the pool. Returns nil if pool is empty.
     func takeImage() -> ImageWithMetadata? {
-        guard !pool.isEmpty else { return nil }
-        let item = pool.removeFirst()
+        let item = pool.isEmpty ? nil : pool.removeFirst()
 
-        // Trigger background refill if pool is getting low
-        if pool.count < poolSize / 2 && !isRefilling {
+        // Trigger a background refill whenever the pool is low OR empty. The
+        // check deliberately runs even on the empty path: a pool that drained to
+        // empty (a network blip, or a moment where every unreserved path was
+        // momentarily taken) must still schedule a refill so it can recover once
+        // conditions improve, instead of freezing until the saver restarts.
+        if pool.count < poolSize / 2 && !isRefilling && !isStopped {
             Task { await refillPool() }
         }
 
@@ -229,12 +240,33 @@ actor ImagePool {
         isRefilling = true
         defer { isRefilling = false }
 
+        var consecutiveFailures = 0
+
         while pool.count < poolSize && !isStopped {
             if let item = await fetchNextImage() {
                 pool.append(item)
-            } else {
-                // Skip failed fetches but don't retry endlessly
-                break
+                consecutiveFailures = 0
+                continue
+            }
+
+            // A fetch failed — either a transient network error or a moment
+            // where every unreserved art path is taken (small library / second
+            // monitor). Don't `break` permanently (that was the freeze bug), but
+            // don't spin hot either: after a few consecutive failures, back off
+            // once. `isRefilling` stays true across the sleep, so `takeImage()`
+            // won't spawn a parallel refill that hammers a dead server every
+            // rotation tick. If the situation hasn't recovered after the delay,
+            // exit this pass — the next `takeImage()` re-triggers a fresh refill.
+            consecutiveFailures += 1
+            if consecutiveFailures >= Self.maxRefillFailures {
+                try? await Task.sleep(nanoseconds: Self.refillRetryDelayNanos)
+                if isStopped { return }
+                if let item = await fetchNextImage() {
+                    pool.append(item)
+                    consecutiveFailures = 0
+                } else {
+                    break
+                }
             }
         }
     }

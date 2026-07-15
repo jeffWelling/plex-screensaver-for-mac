@@ -30,6 +30,11 @@ class GridManager {
     private let crossfadeDuration: TimeInterval = 1.0
     private let backingScale: CGFloat
     private var cellMetadata: [Int: CellMetadata] = [:]
+    /// Cells with a rotation in flight (from the moment one is chosen until its
+    /// crossfade completes). Excluded from the weighted pick so the same cell is
+    /// never rotated twice concurrently — overlapping rotations would strand a
+    /// reservation (leak) and desync the dual-layer crossfade. Main-thread only.
+    private var transitioningCells: Set<Int> = []
 
     init(frame: CGRect, rows: Int, columns: Int, rotationInterval: TimeInterval, showTitleReveal: Bool = true, titleDisplayDuration: TimeInterval = 2.0, backingScale: CGFloat = 2.0) {
         self.rows = max(1, rows)
@@ -118,13 +123,20 @@ class GridManager {
     private func rotateWeightedRandomCell() {
         guard !cells.isEmpty else { return }
 
+        // Only consider cells that are not already mid-transition. Picking a cell
+        // that is still crossfading would overlap two rotations on it, stranding
+        // the outgoing reservation and desyncing the crossfade layers. If every
+        // cell is transitioning (e.g. a 1x1 grid mid-rotation), skip this tick.
+        let available = (0..<cells.count).filter { !transitioningCells.contains($0) }
+        guard !available.isEmpty else { return }
+
         let now = Date()
 
         // Weight = base randomness + staleness bonus (squared)
         // The base of 1.0 ensures true randomness even when all cells are equally fresh.
         // The staleness term ensures neglected cells get picked more often over time.
         var weights: [Double] = []
-        for i in 0..<cells.count {
+        for i in available {
             let elapsed = lastUpdateTime[i].map { now.timeIntervalSince($0) } ?? rotationInterval
             let staleness = elapsed / rotationInterval  // normalize to ~1.0
             weights.append(1.0 + staleness * staleness)
@@ -132,11 +144,11 @@ class GridManager {
 
         let totalWeight = weights.reduce(0, +)
 
-        // Weighted random pick
+        // Weighted random pick over the available cells.
         var roll = Double.random(in: 0..<totalWeight)
-        var chosen = 0
-        for i in 0..<weights.count {
-            roll -= weights[i]
+        var chosen = available[0]
+        for (j, i) in available.enumerated() {
+            roll -= weights[j]
             if roll <= 0 {
                 chosen = i
                 break
@@ -188,19 +200,29 @@ class GridManager {
         guard let pool = imagePool, index < cells.count else { return }
         let cell = cells[index]
 
+        // Mark in-transition before the async take so a subsequent tick's pick
+        // excludes this cell. Cleared when the transition completes, or
+        // immediately below if the pool had nothing to give.
+        transitioningCells.insert(index)
+
         Task { [weak self] in
-            if let newItem = await pool.takeImage() {
-                await MainActor.run {
-                    guard let self = self else { return }
-                    self.lastUpdateTime[index] = Date()
-                    if self.showTitleReveal {
-                        self.revealThenRotate(cell: cell, index: index, newItem: newItem)
-                    } else {
-                        let outgoingPath = self.cellMetadata[index]?.artPath
-                        cell.displayImage(newItem.image, transitionDuration: self.crossfadeDuration)
-                        self.cellMetadata[index] = CellMetadata(artPath: newItem.artPath, title: newItem.title, year: newItem.year)
-                        self.scheduleRelease(of: outgoingPath, afterDelay: self.crossfadeDuration)
-                    }
+            let newItem = await pool.takeImage()
+            await MainActor.run {
+                guard let self = self else { return }
+                guard let newItem = newItem else {
+                    // Pool empty — cell keeps its current image; release the mark.
+                    self.transitioningCells.remove(index)
+                    return
+                }
+                self.lastUpdateTime[index] = Date()
+                if self.showTitleReveal {
+                    self.revealThenRotate(cell: cell, index: index, newItem: newItem)
+                } else {
+                    let outgoingPath = self.cellMetadata[index]?.artPath
+                    cell.displayImage(newItem.image, transitionDuration: self.crossfadeDuration)
+                    self.cellMetadata[index] = CellMetadata(artPath: newItem.artPath, title: newItem.title, year: newItem.year)
+                    self.scheduleRelease(of: outgoingPath, afterDelay: self.crossfadeDuration)
+                    self.scheduleTransitionEnd(index: index, afterDelay: self.crossfadeDuration)
                 }
             }
         }
@@ -222,11 +244,26 @@ class GridManager {
         // After title display duration, crossfade to the new image
         DispatchQueue.main.asyncAfter(deadline: .now() + titleDisplayDuration) { [weak self] in
             guard let self = self else { return }
+            // Re-read the cell's CURRENT occupant instead of the value captured at
+            // entry. The transitioningCells guard should prevent overlap, but if a
+            // race ever slipped a different rotation in, releasing the actual
+            // on-screen path (not the stale captured one) avoids stranding the
+            // interloper's reservation.
+            let outgoingNow = self.cellMetadata[index]
             cell.displayImage(newItem.image, transitionDuration: self.crossfadeDuration)
             self.cellMetadata[index] = CellMetadata(artPath: newItem.artPath, title: newItem.title, year: newItem.year)
             // Outgoing image remains partly visible through the crossfade — keep its path
             // reserved until the crossfade completes to prevent another cell from picking it.
-            self.scheduleRelease(of: outgoing?.artPath, afterDelay: self.crossfadeDuration)
+            self.scheduleRelease(of: outgoingNow?.artPath, afterDelay: self.crossfadeDuration)
+            self.scheduleTransitionEnd(index: index, afterDelay: self.crossfadeDuration)
+        }
+    }
+
+    /// Clear a cell's in-transition mark after its crossfade completes, so the
+    /// weighted pick can select it again on a future tick.
+    private func scheduleTransitionEnd(index: Int, afterDelay delay: TimeInterval) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            self?.transitioningCells.remove(index)
         }
     }
 
