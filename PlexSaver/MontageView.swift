@@ -26,10 +26,17 @@ class MontageView: ScreenSaverView {
     private var statusBackdropLayer: CALayer?
     private var versionLayer: CATextLayer?
 
-    // Cached-image rotation (Phase 1, before ImagePool takes over)
-    private var cachedImages: [NSImage] = []
+    // Cached-image rotation (Phase 1, before ImagePool takes over). Each cached
+    // image carries its art-path key so Phase 1 can reserve through the shared
+    // ReservationRegistry and never show the same artwork twice across monitors.
+    private var cachedImages: [(key: String, image: NSImage)] = []
     private var cachedRotationTimer: Timer?
-    private var cachedImageIndex = 0
+    /// Art-path keys this view has reserved for its cached cells (Phase 1 only),
+    /// released on handoff/teardown so Phase 2 and other screens can reuse them.
+    private var reservedCachedKeys: Set<String> = []
+    /// The cached key currently shown in each cell, so a rotation can release the
+    /// outgoing key after its crossfade.
+    private var cachedCellKeys: [Int: String] = [:]
     private var isUsingCachedImages = false
 
     private var isRunningInApp: Bool {
@@ -390,20 +397,11 @@ class MontageView: ScreenSaverView {
             let cacheFresh = await cache.isFresh
 
             if cachedCount > 0 {
-                let totalCells = gridManager?.cells.count ?? 12
+                let totalCells = await MainActor.run { self.gridManager?.cells.count ?? 12 }
                 let images = await cache.allCachedImages(limit: totalCells * 3)
 
                 if !images.isEmpty {
-                    await MainActor.run {
-                        OSLog.info("startImagePipeline (\(self.instanceNumber)): Phase 1 — showing \(images.count) cached images (fresh: \(cacheFresh))")
-                        self.cachedImages = images
-                        self.fillGridWithCachedImages()
-                        self.fadeInGrid()
-                        self.startCachedRotation()
-                        if !cacheFresh {
-                            self.showStatus("Connecting to \(providerName)...", position: .bottom)
-                        }
-                    }
+                    await self.setupCachedPhase(images: images, cacheFresh: cacheFresh, providerName: providerName)
                 } else {
                     await MainActor.run {
                         self.showStatus("Connecting to \(providerName) server...", position: .centered)
@@ -486,12 +484,16 @@ class MontageView: ScreenSaverView {
                 return
             }
 
-            // Hand off to ImagePool-backed rotation
+            // Hand off to ImagePool-backed rotation. Capture whether Phase 1 was
+            // on-screen *before* stopping it: a cached start means the fade
+            // overlay is already gone, so the pool must take over cell-by-cell
+            // with crossfades rather than a visible full-grid snap (U2).
+            let wasUsingCached = self.isUsingCachedImages
             OSLog.info("startImagePipeline (\(self.instanceNumber)): Phase 2 — switching to live pool (\(filledCount) images)")
             self.stopCachedRotation()
 
             if let gm = self.gridManager {
-                gm.startRotation(imagePool: pool)
+                gm.startRotation(imagePool: pool, staggered: wasUsingCached)
                 self.fadeOutStatus()
 
                 if !self.isUsingCachedImages {
@@ -506,19 +508,57 @@ class MontageView: ScreenSaverView {
 
     // MARK: - Cached Image Rotation (Phase 1)
 
-    private func fillGridWithCachedImages() {
-        guard let gm = gridManager, !cachedImages.isEmpty else { return }
+    /// Reserve cached art paths through the shared registry (so no artwork
+    /// appears twice across monitors), assign one reserved image per cell, fade
+    /// the grid in, and start cached rotation. Cells with no unreserved image
+    /// available are left black rather than showing a duplicate tile (U1).
+    private func setupCachedPhase(images: [(key: String, image: NSImage)], cacheFresh: Bool, providerName: String) async {
+        // Shuffle so two monitors racing the same LRU-ordered cache don't even
+        // attempt the same sequence (less registry contention, more variety).
+        let shuffled = images.shuffled()
+        let cellCount = await MainActor.run { self.gridManager?.cells.count ?? 0 }
+        guard cellCount > 0 else { return }
 
-        for (i, cell) in gm.cells.enumerated() {
-            let image = cachedImages[i % cachedImages.count]
-            cell.displayImage(image, transitionDuration: 0)
+        var assignments: [(cellIndex: Int, image: NSImage, key: String)] = []
+        var reserved: Set<String> = []
+        var scanIndex = 0
+
+        for cellIndex in 0..<cellCount {
+            var scanned = 0
+            while scanned < shuffled.count {
+                let pair = shuffled[scanIndex % shuffled.count]
+                scanIndex += 1
+                scanned += 1
+                if reserved.contains(pair.key) { continue }
+                if await ReservationRegistry.shared.reserve(pair.key) {
+                    reserved.insert(pair.key)
+                    assignments.append((cellIndex, pair.image, pair.key))
+                    break
+                }
+            }
         }
-        isUsingCachedImages = true
+
+        await MainActor.run {
+            OSLog.info("startImagePipeline (\(self.instanceNumber)): Phase 1 — reserved \(assignments.count)/\(cellCount) cells from \(shuffled.count) cached images (fresh: \(cacheFresh))")
+            self.cachedImages = shuffled
+            self.reservedCachedKeys = reserved
+            for a in assignments {
+                if let gm = self.gridManager, a.cellIndex < gm.cells.count {
+                    gm.cells[a.cellIndex].displayImage(a.image, transitionDuration: 0)
+                    self.cachedCellKeys[a.cellIndex] = a.key
+                }
+            }
+            self.isUsingCachedImages = true
+            self.fadeInGrid()
+            self.startCachedRotation()
+            if !cacheFresh {
+                self.showStatus("Connecting to \(providerName)...", position: .bottom)
+            }
+        }
     }
 
     private func startCachedRotation() {
         let interval = Preferences.rotationInterval
-        cachedImageIndex = 0
 
         let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
             self?.rotateCachedCell()
@@ -527,18 +567,72 @@ class MontageView: ScreenSaverView {
         cachedRotationTimer = timer
     }
 
+    /// Rotate one cell to a different cached image, routed through the registry
+    /// so the incoming artwork is unique across all monitors and the outgoing
+    /// key is released after the crossfade.
     private func rotateCachedCell() {
-        guard let gm = gridManager, !cachedImages.isEmpty else { return }
-        let cellIndex = Int.random(in: 0..<gm.cells.count)
-        let image = cachedImages[cachedImageIndex % cachedImages.count]
-        cachedImageIndex += 1
-        gm.cells[cellIndex].displayImage(image, transitionDuration: 1.0)
+        Task { [weak self] in
+            guard let self = self else { return }
+
+            // Snapshot the state we need on the main thread.
+            let snapshot: (cellIndex: Int, candidates: [(key: String, image: NSImage)], outgoingKey: String?, reserved: Set<String>)? = await MainActor.run {
+                guard let gm = self.gridManager, !gm.cells.isEmpty, !self.cachedImages.isEmpty else { return nil }
+                let cellIndex = Int.random(in: 0..<gm.cells.count)
+                return (cellIndex, self.cachedImages.shuffled(), self.cachedCellKeys[cellIndex], self.reservedCachedKeys)
+            }
+            guard let snap = snapshot else { return }
+
+            // Find (and reserve) the next unreserved cached image, skipping the
+            // one already in this cell.
+            var chosen: (key: String, image: NSImage)?
+            for pair in snap.candidates {
+                if pair.key == snap.outgoingKey { continue }
+                if snap.reserved.contains(pair.key) { continue }
+                if await ReservationRegistry.shared.reserve(pair.key) {
+                    chosen = pair
+                    break
+                }
+            }
+            guard let winner = chosen else { return }  // nothing free — leave cell as-is
+
+            await MainActor.run {
+                guard self.isUsingCachedImages, let gm = self.gridManager, snap.cellIndex < gm.cells.count else {
+                    // Handoff/teardown raced us — return the reservation we took.
+                    Task { await ReservationRegistry.shared.release(winner.key) }
+                    return
+                }
+                gm.cells[snap.cellIndex].displayImage(winner.image, transitionDuration: 1.0)
+                self.reservedCachedKeys.insert(winner.key)
+                self.cachedCellKeys[snap.cellIndex] = winner.key
+                if let outgoing = snap.outgoingKey {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                        guard let self = self else { return }
+                        self.reservedCachedKeys.remove(outgoing)
+                        Task { await ReservationRegistry.shared.release(outgoing) }
+                    }
+                }
+            }
+        }
     }
 
     private func stopCachedRotation() {
         cachedRotationTimer?.invalidate()
         cachedRotationTimer = nil
         cachedImages.removeAll()
+        cachedCellKeys.removeAll()
+
+        // Release every Phase-1 reservation this view still holds so Phase 2 and
+        // other screens can reuse those art paths (U1 handoff/teardown release).
+        let toRelease = reservedCachedKeys
+        reservedCachedKeys.removeAll()
+        if !toRelease.isEmpty {
+            Task {
+                for key in toRelease {
+                    await ReservationRegistry.shared.release(key)
+                }
+            }
+        }
+
         isUsingCachedImages = false
     }
 

@@ -91,12 +91,29 @@ class GridManager {
 
     // MARK: - Rotation
 
-    func startRotation(imagePool: ImagePool) {
+    /// Begin pool-backed rotation.
+    ///
+    /// `staggered` controls the initial fill. On a cold start the grid is hidden
+    /// behind the fade-in overlay, so all cells can snap at once (`false`). On a
+    /// cached-start handoff the overlay is already gone (Phase 1 faded it in), so
+    /// a full-grid snap would be a visible hard cut — pass `true` to crossfade
+    /// each cell to its first pool image, spread over a short window (U2).
+    func startRotation(imagePool: ImagePool, staggered: Bool = false) {
         self.imagePool = imagePool
 
-        // Fill all cells at once (hidden behind fade-in overlay) — no title reveal on initial fill
-        for i in 0..<cells.count {
-            rotateCellImmediate(at: i)
+        if staggered {
+            let window = min(rotationInterval, 3.0)
+            let step = cells.isEmpty ? 0 : window / Double(cells.count)
+            for i in 0..<cells.count {
+                DispatchQueue.main.asyncAfter(deadline: .now() + step * Double(i)) { [weak self] in
+                    self?.rotateCellCrossfadeInitial(at: i)
+                }
+            }
+        } else {
+            // Fill all cells at once (hidden behind fade-in overlay) — no title reveal on initial fill
+            for i in 0..<cells.count {
+                rotateCellImmediate(at: i)
+            }
         }
 
         // One cell changes every rotationInterval seconds. Construct the timer
@@ -191,6 +208,32 @@ class GridManager {
                     self?.cellMetadata[index] = CellMetadata(artPath: item.artPath, title: item.title, year: item.year)
                     self?.lastUpdateTime[index] = Date()
                 }
+            }
+        }
+    }
+
+    /// Initial fill for the staggered cached-start handoff: crossfade the cell to
+    /// its first pool image (no title reveal). The cell's prior content is a
+    /// Phase-1 cached image whose reservation is owned and released by
+    /// `MontageView`, so there is nothing for the pool to release here.
+    private func rotateCellCrossfadeInitial(at index: Int) {
+        guard let pool = imagePool, index < cells.count else { return }
+        let cell = cells[index]
+
+        transitioningCells.insert(index)
+
+        Task { [weak self] in
+            let item = await pool.takeImage()
+            await MainActor.run {
+                guard let self = self else { return }
+                guard let item = item else {
+                    self.transitioningCells.remove(index)
+                    return
+                }
+                cell.displayImage(item.image, transitionDuration: self.crossfadeDuration)
+                self.cellMetadata[index] = CellMetadata(artPath: item.artPath, title: item.title, year: item.year)
+                self.lastUpdateTime[index] = Date()
+                self.scheduleTransitionEnd(index: index, afterDelay: self.crossfadeDuration)
             }
         }
     }

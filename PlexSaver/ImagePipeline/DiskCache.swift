@@ -149,19 +149,21 @@ actor DiskCache {
         return image
     }
 
-    /// Load up to `limit` cached images (most recently accessed first).
-    func allCachedImages(limit: Int) -> [NSImage] {
+    /// Load up to `limit` cached images (most recently accessed first), each
+    /// paired with its art-path key so the caller can route Phase-1 selection
+    /// through `ReservationRegistry` (see U1) and dedupe across monitors.
+    func allCachedImages(limit: Int) -> [(key: String, image: NSImage)] {
         let sorted = manifest.entries.sorted { $0.lastAccess > $1.lastAccess }
-        var images: [NSImage] = []
+        var results: [(key: String, image: NSImage)] = []
 
         for entry in sorted.prefix(limit) {
             let file = cacheDirectory.appendingPathComponent(entry.filename)
             if let image = NSImage(contentsOf: file) {
-                images.append(image)
+                results.append((key: entry.key, image: image))
             }
         }
 
-        return images
+        return results
     }
 
     // MARK: - Write
