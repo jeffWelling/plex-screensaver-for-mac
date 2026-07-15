@@ -43,6 +43,12 @@ struct Preferences {
     @SimpleStorage(key: "GridColumns", defaultValue: 4)
     static var gridColumns: Int
 
+    /// When true, columns are computed per-display from the display bounds and
+    /// the source aspect (N4), keeping the user's row count. Default false keeps
+    /// the existing manual rows × columns behavior.
+    @SimpleStorage(key: "GridAutoColumns", defaultValue: false)
+    static var gridAutoColumns: Bool
+
     @SimpleStorage(key: "RotationInterval", defaultValue: 5.0)
     static var rotationInterval: Double
 

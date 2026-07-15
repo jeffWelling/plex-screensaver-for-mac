@@ -209,12 +209,17 @@ struct ConfigurationView: View {
     }
 
     private var gridLayoutView: some View {
-        HStack(spacing: 16) {
-            Stepper("Rows: \(viewModel.gridRows)", value: $viewModel.gridRows, in: 1...10)
-            Stepper("Cols: \(viewModel.gridColumns)", value: $viewModel.gridColumns, in: 1...10)
-            Spacer()
-            Text("\(viewModel.gridRows * viewModel.gridColumns) cells")
-                .foregroundColor(.secondary)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 16) {
+                Stepper("Rows: \(viewModel.gridRows)", value: $viewModel.gridRows, in: 1...10)
+                Stepper("Cols: \(viewModel.gridColumns)", value: $viewModel.gridColumns, in: 1...10)
+                    .disabled(viewModel.gridAutoColumns)
+                Spacer()
+                Text(viewModel.gridAutoColumns ? "\(viewModel.gridRows) rows × auto" : "\(viewModel.gridRows * viewModel.gridColumns) cells")
+                    .foregroundColor(.secondary)
+                    .font(.caption)
+            }
+            Toggle("Auto-fit columns to each display", isOn: $viewModel.gridAutoColumns)
                 .font(.caption)
         }
     }

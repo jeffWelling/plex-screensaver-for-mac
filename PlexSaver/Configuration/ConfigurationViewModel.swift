@@ -11,6 +11,7 @@ class ConfigurationViewModel: ObservableObject {
     @Published var plexToken: String = ""
     @Published var gridRows: Int = 3
     @Published var gridColumns: Int = 4
+    @Published var gridAutoColumns: Bool = false
     @Published var rotationInterval: Double = 5.0
     @Published var imageSource: ImageSourceType = .fanart
     @Published var selectedLibraryIds: Set<String> = []
@@ -184,6 +185,7 @@ class ConfigurationViewModel: ObservableObject {
         plexToken = Preferences.plexToken
         gridRows = Preferences.gridRows
         gridColumns = Preferences.gridColumns
+        gridAutoColumns = Preferences.gridAutoColumns
         rotationInterval = Preferences.rotationInterval
         imageSource = Preferences.imageSource
         selectedLibraryIds = Set(Preferences.selectedLibraryIds)
@@ -224,6 +226,10 @@ class ConfigurationViewModel: ObservableObject {
 
         $gridColumns
             .sink { Preferences.gridColumns = $0 }
+            .store(in: &cancellables)
+
+        $gridAutoColumns
+            .sink { Preferences.gridAutoColumns = $0 }
             .store(in: &cancellables)
 
         $rotationInterval

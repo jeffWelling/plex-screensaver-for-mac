@@ -310,7 +310,18 @@ class MontageView: ScreenSaverView {
 
     private func setupGrid() {
         let rows = Preferences.gridRows
-        let columns = Preferences.gridColumns
+        let columns: Int
+        if Preferences.gridAutoColumns {
+            // Compute columns for THIS display from its bounds and the source
+            // aspect, keeping the user's row count (N4). Falls back to the manual
+            // column count if bounds aren't available yet.
+            let targetAspect: CGFloat = Preferences.imageSource == .posters ? (2.0 / 3.0) : (16.0 / 9.0)
+            columns = bounds.width > 0 && bounds.height > 0
+                ? GridManager.autoColumns(width: bounds.width, height: bounds.height, rows: rows, targetAspect: targetAspect)
+                : Preferences.gridColumns
+        } else {
+            columns = Preferences.gridColumns
+        }
 
         let manager = GridManager(
             frame: bounds,

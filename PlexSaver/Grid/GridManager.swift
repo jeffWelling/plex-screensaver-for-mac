@@ -61,6 +61,21 @@ class GridManager {
         buildGrid(frame: frame)
     }
 
+    /// Columns that best match `targetAspect` for a display of the given size and
+    /// row count (N4 "Auto" grid mode). Keeps the caller's row count and picks
+    /// the column count whose resulting cell aspect is closest to the source's
+    /// (16:9 fanart, 2:3 posters). Pure and clamped to 1...20 so it is safe to
+    /// unit-test and to feed straight into a grid build.
+    static func autoColumns(width: CGFloat, height: CGFloat, rows: Int, targetAspect: CGFloat) -> Int {
+        let rows = max(1, rows)
+        guard width > 0, height > 0, targetAspect > 0 else { return 1 }
+        let cellHeight = height / CGFloat(rows)
+        let targetCellWidth = cellHeight * targetAspect
+        guard targetCellWidth > 0 else { return 1 }
+        let cols = Int((width / targetCellWidth).rounded())
+        return max(1, min(cols, 20))
+    }
+
     var cellWidth: CGFloat {
         return rootLayer.frame.width / CGFloat(columns)
     }
