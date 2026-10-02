@@ -44,6 +44,21 @@ struct PlexMediaItem: Decodable {
     let parentThumb: String?
     let grandparentThumb: String?
     let grandparentArt: String?
+    let Genre: [PlexTag]?
+    let Collection: [PlexTag]?
+    let viewCount: Int?
+    let leafCount: Int?
+    let viewedLeafCount: Int?
+
+    /// Plex omits a zero viewCount for unplayed flat items. Series count as
+    /// watched only when every episode has been played, not after one episode.
+    var watched: Bool? {
+        if type == "show" {
+            guard let total = leafCount, total > 0 else { return nil }
+            return (viewedLeafCount ?? 0) >= total
+        }
+        return (viewCount ?? 0) > 0
+    }
 
     /// Returns the best art path for the given image source preference.
     func artPath(for source: ImageSourceType) -> String? {
@@ -57,6 +72,10 @@ struct PlexMediaItem: Decodable {
             return options.randomElement()
         }
     }
+}
+
+struct PlexTag: Decodable {
+    let tag: String
 }
 
 // MARK: - Provider Conversions
@@ -81,7 +100,10 @@ extension PlexMediaItem {
             title: title,
             year: year,
             artPaths: paths,
-            mediaType: type.map { $0 == "show" ? "series" : $0.lowercased() }
+            mediaType: type.map { $0 == "show" ? "series" : $0.lowercased() },
+            genres: Genre?.map(\.tag),
+            collections: Collection?.map(\.tag),
+            isWatched: watched
         )
     }
 }

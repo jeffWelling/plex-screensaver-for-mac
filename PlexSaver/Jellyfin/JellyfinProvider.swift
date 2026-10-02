@@ -10,6 +10,7 @@ struct JellyfinProvider: MediaProvider {
     private let client: JellyfinClient
 
     let serverName: String = "Jellyfin Server"
+    var filterCapabilities: MediaFilterCapabilities { ProviderType.jellyfin.filterCapabilities }
 
     init(serverURL: String, accessToken: String, userId: String) {
         self.client = JellyfinClient(serverURL: serverURL, accessToken: accessToken, userId: userId)

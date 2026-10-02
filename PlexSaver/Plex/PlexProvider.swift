@@ -10,6 +10,7 @@ struct PlexProvider: MediaProvider {
     private let client: PlexClient
 
     let serverName: String = "Plex Server"
+    var filterCapabilities: MediaFilterCapabilities { ProviderType.plex.filterCapabilities }
 
     init(serverURL: String, token: String, fallbackURLs: [String] = []) {
         self.client = PlexClient(serverURL: serverURL, token: token, fallbackURLs: fallbackURLs)

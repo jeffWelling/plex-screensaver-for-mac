@@ -90,6 +90,8 @@ struct JellyfinItem: Decodable {
     let productionYear: Int?
     let imageTags: [String: String]?
     let backdropImageTags: [String]?
+    let genres: [String]?
+    let userData: JellyfinItemUserData?
 
     enum CodingKeys: String, CodingKey {
         case id = "Id"
@@ -98,6 +100,8 @@ struct JellyfinItem: Decodable {
         case productionYear = "ProductionYear"
         case imageTags = "ImageTags"
         case backdropImageTags = "BackdropImageTags"
+        case genres = "Genres"
+        case userData = "UserData"
     }
 
     /// Convert to provider-agnostic MediaItem
@@ -119,7 +123,19 @@ struct JellyfinItem: Decodable {
             title: name,
             year: productionYear,
             artPaths: paths,
-            mediaType: type.lowercased() == "musicalbum" ? "album" : type.lowercased()
+            mediaType: type.lowercased() == "musicalbum" ? "album" : type.lowercased(),
+            genres: genres,
+            isFavorite: userData?.isFavorite,
+            isWatched: userData?.played
         )
+    }
+}
+
+struct JellyfinItemUserData: Decodable {
+    let isFavorite: Bool?
+    let played: Bool?
+    enum CodingKeys: String, CodingKey {
+        case isFavorite = "IsFavorite"
+        case played = "Played"
     }
 }

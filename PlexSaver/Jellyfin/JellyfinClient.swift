@@ -30,7 +30,8 @@ actor JellyfinClient {
                 URLQueryItem(name: "ParentId", value: libraryId),
                 URLQueryItem(name: "Recursive", value: "true"),
                 URLQueryItem(name: "IncludeItemTypes", value: "Movie,Series,MusicAlbum"),
-                URLQueryItem(name: "Fields", value: "PrimaryImageAspectRatio"),
+                URLQueryItem(name: "Fields", value: "PrimaryImageAspectRatio,Genres"),
+                URLQueryItem(name: "EnableUserData", value: "true"),
                 URLQueryItem(name: "StartIndex", value: String(startIndex)),
                 URLQueryItem(name: "Limit", value: String(pageSize))
             ])
