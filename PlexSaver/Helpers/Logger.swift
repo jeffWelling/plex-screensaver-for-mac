@@ -1,19 +1,21 @@
-//
-//  Logger.swift
-//  PlexSaver
-//
-
 import Foundation
 import os.log
 
 extension OSLog {
-    static let screenSaver = OSLog(subsystem: AppConstants.module, category: "Screensaver")
+    static var screenSaver: OSLog { OSLog(subsystem: AppConstants.module, category: "Screensaver") }
 
+    /// Legacy messages remain private; new structured events expose only stable
+    /// categories and numeric diagnostics, never server addresses or credentials.
     static func info(_ message: String) {
-        let pid = ProcessInfo.processInfo.processIdentifier
-        // Message is logged as private so that any server-derived string
-        // (URLs, item titles, error text) is redacted in the unified log by
-        // default, guarding against accidental credential leakage.
-        os_log("MO (P:%d): %{private}@", log: .screenSaver, type: .default, pid, message)
+        os_log("Montage pid:%d %{private}@", log: screenSaver, type: .info,
+               ProcessInfo.processInfo.processIdentifier, message)
+    }
+    static func event(_ name: StaticString, detail: String = "", level: OSLogType = .info) {
+        os_log("Montage %{public}@ pid:%d %{private}@", log: screenSaver, type: level,
+               String(describing: name), ProcessInfo.processInfo.processIdentifier, detail)
+    }
+    static func metric(_ name: StaticString, value: Int) {
+        os_log("Montage %{public}@ value:%d pid:%d", log: screenSaver, type: .debug,
+               String(describing: name), value, ProcessInfo.processInfo.processIdentifier)
     }
 }

@@ -6,7 +6,7 @@
 import AppKit
 
 /// Protocol for media server providers (Plex, Jellyfin, etc.)
-protocol MediaProvider: Actor {
+protocol MediaProvider: Sendable {
     /// Human-readable server name for display
     var serverName: String { get }
 

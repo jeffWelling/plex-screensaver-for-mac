@@ -105,20 +105,21 @@ struct JellyfinItem: Decodable {
         var paths: [ImageSourceType: String] = [:]
 
         // Primary image -> poster
-        if imageTags?["Primary"] != nil {
-            paths[.posters] = "/Items/\(id)/Images/Primary"
+        if let tag = imageTags?["Primary"] {
+            paths[.posters] = "/Items/\(ServerEndpoint.pathComponent(id))/Images/Primary?tag=\(ServerEndpoint.pathComponent(tag))"
         }
 
         // Backdrop -> fanart
-        if let backdropTags = backdropImageTags, !backdropTags.isEmpty {
-            paths[.fanart] = "/Items/\(id)/Images/Backdrop"
+        if let tag = backdropImageTags?.first {
+            paths[.fanart] = "/Items/\(ServerEndpoint.pathComponent(id))/Images/Backdrop/0?tag=\(ServerEndpoint.pathComponent(tag))"
         }
 
         return MediaItem(
             id: id,
             title: name,
             year: productionYear,
-            artPaths: paths
+            artPaths: paths,
+            mediaType: type.lowercased() == "musicalbum" ? "album" : type.lowercased()
         )
     }
 }

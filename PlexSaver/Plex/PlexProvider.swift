@@ -6,13 +6,13 @@
 import AppKit
 
 /// MediaProvider implementation for Plex servers
-actor PlexProvider: MediaProvider {
+struct PlexProvider: MediaProvider {
     private let client: PlexClient
 
-    nonisolated let serverName: String = "Plex Server"
+    let serverName: String = "Plex Server"
 
-    init(serverURL: String, token: String) {
-        self.client = PlexClient(serverURL: serverURL, token: token)
+    init(serverURL: String, token: String, fallbackURLs: [String] = []) {
+        self.client = PlexClient(serverURL: serverURL, token: token, fallbackURLs: fallbackURLs)
     }
 
     func fetchLibraries() async throws -> [MediaLibrary] {

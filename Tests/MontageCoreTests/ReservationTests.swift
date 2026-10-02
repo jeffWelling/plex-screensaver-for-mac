@@ -28,6 +28,7 @@ final class ReservationTests: XCTestCase {
         var onScreenA: [ImageWithMetadata] = []
         var onScreenB: [ImageWithMetadata] = []
         var rng = SeededGenerator(seed: 0x5EED_1234)
+        var successfulTakes = 0
 
         func assertInvariants(step: Int) async {
             let all = onScreenA + onScreenB
@@ -48,21 +49,23 @@ final class ReservationTests: XCTestCase {
             let take = Bool.random(using: &rng)
             if take {
                 if useA {
-                    if let item = await poolA.takeImage() { onScreenA.append(item) }
+                    if let item = await poolA.takeImage() { onScreenA.append(item); successfulTakes += 1 }
                 } else {
-                    if let item = await poolB.takeImage() { onScreenB.append(item) }
+                    if let item = await poolB.takeImage() { onScreenB.append(item); successfulTakes += 1 }
                 }
             } else {
                 if useA, !onScreenA.isEmpty {
                     let removed = onScreenA.remove(at: Int.random(in: 0..<onScreenA.count, using: &rng))
-                    await poolA.release(artPath: removed.artPath)
+                    await poolA.release(item: removed)
                 } else if !useA, !onScreenB.isEmpty {
                     let removed = onScreenB.remove(at: Int.random(in: 0..<onScreenB.count, using: &rng))
-                    await poolB.release(artPath: removed.artPath)
+                    await poolB.release(item: removed)
                 }
             }
             await assertInvariants(step: step)
         }
+
+        XCTAssertGreaterThan(successfulTakes, 20, "rotation must actually make progress")
 
         // Leak detector: stop() must return every reservation the pool still
         // holds (including on-screen cells), draining the registry to zero.
@@ -87,7 +90,7 @@ final class ReservationTests: XCTestCase {
         let afterTakes = await registry.count
         XCTAssertEqual(afterTakes, held.count)
 
-        for item in held { await pool.release(artPath: item.artPath) }
+        for item in held { await pool.release(item: item) }
         let afterReleases = await registry.count
         XCTAssertEqual(afterReleases, 0, "every taken reservation must release back to zero")
         await pool.stop()
@@ -101,7 +104,7 @@ final class ReservationTests: XCTestCase {
         let registry = ReservationRegistry()
         let pool = ImagePool(provider: provider, imageSource: .fanart,
                              cellWidth: 4, cellHeight: 4, poolSize: 4,
-                             diskCache: nil, registry: registry)
+                             diskCache: nil, registry: registry, retryInterval: 0)
         _ = await pool.loadMediaItems(libraryIds: ["lib"])
 
         let filled = await pool.prefill()

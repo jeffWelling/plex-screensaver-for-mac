@@ -90,10 +90,10 @@ final class PureLogicTests: XCTestCase {
 
     func testMixedArtPathExcludesPostersByDefault() {
         let item = MediaItem(id: "1", title: "T", year: 2000, artPaths: [.fanart: "/f", .posters: "/p"])
-        XCTAssertEqual(item.artPath(for: .mixed), "/f")
+        XCTAssertEqual(item.artPath(for: .mixed, includePostersInMixed: false), "/f")
 
         let posterOnly = MediaItem(id: "2", title: "Poster only", year: nil, artPaths: [.posters: "/p2"])
-        XCTAssertNil(posterOnly.artPath(for: .mixed))
+        XCTAssertNil(posterOnly.artPath(for: .mixed, includePostersInMixed: false))
     }
 
     func testMixedPoolHonorsPosterPreference() async {
@@ -103,7 +103,7 @@ final class PureLogicTests: XCTestCase {
         ]
         let provider = MockProvider(itemsByLibrary: ["lib": items])
 
-        let defaultPool = ImagePool(provider: provider, imageSource: .mixed,
+        let defaultPool = ImagePool(provider: provider, imageSource: .mixed, includePostersInMixed: false,
                                     cellWidth: 4, cellHeight: 4, poolSize: 2,
                                     registry: ReservationRegistry())
         let defaultCount = await defaultPool.loadMediaItems(libraryIds: ["lib"])
@@ -155,8 +155,8 @@ final class PureLogicTests: XCTestCase {
         XCTAssertEqual(item.id, "abc")
         XCTAssertEqual(item.title, "Dune")
         XCTAssertEqual(item.year, 2021)
-        XCTAssertEqual(item.artPaths[.posters], "/Items/abc/Images/Primary")
-        XCTAssertEqual(item.artPaths[.fanart], "/Items/abc/Images/Backdrop")
+        XCTAssertEqual(item.artPaths[.posters], "/Items/abc/Images/Primary?tag=tag")
+        XCTAssertEqual(item.artPaths[.fanart], "/Items/abc/Images/Backdrop/0?tag=bd0")
     }
 
     func testJellyfinItemWithoutBackdropHasNoFanart() throws {
@@ -166,7 +166,7 @@ final class PureLogicTests: XCTestCase {
         let jf = try JSONDecoder().decode(JellyfinItem.self, from: json)
         let item = jf.toMediaItem()
         XCTAssertNil(item.artPaths[.fanart])
-        XCTAssertEqual(item.artPaths[.posters], "/Items/x/Images/Primary")
+        XCTAssertEqual(item.artPaths[.posters], "/Items/x/Images/Primary?tag=t")
     }
 
     // MARK: - loadMediaItems dedupes by (title, year) — U5

@@ -1,203 +1,178 @@
-//
-//  Preferences.swift
-//  PlexSaver
-//
-
 import Foundation
 import ScreenSaver
+import CryptoKit
 
-enum ImageSourceType: String, Codable, CaseIterable {
-    case fanart = "fanart"
-    case posters = "posters"
-    case mixed = "mixed"
-
+enum ImageSourceType: String, Codable, CaseIterable, Sendable {
+    case fanart, posters, mixed
     var displayName: String {
-        switch self {
-        case .fanart: return "Fanart (16:9)"
-        case .posters: return "Posters (2:3)"
-        case .mixed: return "Mixed"
-        }
+        switch self { case .fanart: return "Backgrounds"; case .posters: return "Posters"; case .mixed: return "Both" }
     }
 }
 
 struct Preferences {
-    @SimpleStorage(key: "PlexServerURL", defaultValue: "")
-    static var plexServerURL: String
-
-    /// Plex server access token — stored in the Keychain (see `secret`/`storeSecret`).
-    static var plexToken: String {
-        get { secret("PlexToken") }
-        set { storeSecret("PlexToken", newValue) }
+    // UserDefaults supports concurrent access. Keep one domain object so writes
+    // and immediate reads share the same in-memory preference cache.
+    private final class PreferenceDomain: @unchecked Sendable {
+        let defaults = ScreenSaverDefaults(forModuleWithName: AppConstants.module) ?? UserDefaults(suiteName: AppConstants.module)!
+    }
+    private static let domain = PreferenceDomain()
+    static var defaults: UserDefaults { domain.defaults }
+    private static func simple<T>(_ key: String, default value: T) -> T { defaults.object(forKey: key) as? T ?? value }
+    private static func codable<T: Codable>(_ key: String, default value: T) -> T {
+        guard let string = defaults.string(forKey: key), let data = string.data(using: .utf8),
+              let decoded = try? JSONDecoder().decode(T.self, from: data) else { return value }
+        return decoded
+    }
+    private static func setCodable<T: Codable>(_ value: T, forKey key: String) {
+        if let data = try? JSONEncoder().encode(value), let string = String(data: data, encoding: .utf8) { defaults.set(string, forKey: key) }
+    }
+    static var plexServerURL: String {
+        get { simple("PlexServerURL", default: "") }
+        set { defaults.set(newValue, forKey: "PlexServerURL") }
+    }
+    static var plexAccountID: String {
+        get { simple("PlexAccountID", default: "") }
+        set { defaults.set(newValue, forKey: "PlexAccountID") }
+    }
+    static var plexServerID: String {
+        get { simple("PlexServerID", default: "") }
+        set { defaults.set(newValue, forKey: "PlexServerID") }
+    }
+    static var plexFallbackURLs: [String] {
+        get { codable("PlexFallbackURLs", default: []) }
+        set { setCodable(newValue, forKey: "PlexFallbackURLs") }
+    }
+    static var gridRows: Int {
+        get { simple("GridRows", default: 3) }
+        set { defaults.set(newValue, forKey: "GridRows") }
+    }
+    static var gridColumns: Int {
+        get { simple("GridColumns", default: 4) }
+        set { defaults.set(newValue, forKey: "GridColumns") }
+    }
+    static var gridAutoColumns: Bool {
+        get { simple("GridAutoColumns", default: false) }
+        set { defaults.set(newValue, forKey: "GridAutoColumns") }
+    }
+    static var rotationInterval: Double {
+        get { simple("RotationInterval", default: 5.0) }
+        set { defaults.set(newValue, forKey: "RotationInterval") }
+    }
+    static var imageSource: ImageSourceType {
+        get { codable("ImageSource", default: .fanart) }
+        set { setCodable(newValue, forKey: "ImageSource") }
+    }
+    static var includePostersInMixed: Bool {
+        get { simple("IncludePostersInMixed", default: false) }
+        set { defaults.set(newValue, forKey: "IncludePostersInMixed") }
+    }
+    static var selectedLibraryIds: [String] {
+        get { codable("SelectedLibraryIds", default: []) }
+        set { setCodable(newValue, forKey: "SelectedLibraryIds") }
+    }
+    static var showTitleReveal: Bool {
+        get { simple("ShowTitleReveal", default: true) }
+        set { defaults.set(newValue, forKey: "ShowTitleReveal") }
+    }
+    static var titleDisplayDuration: Double {
+        get { simple("TitleDisplayDuration", default: 2.0) }
+        set { defaults.set(newValue, forKey: "TitleDisplayDuration") }
+    }
+    static var showVersionOverlay: Bool {
+        get { simple("ShowVersionOverlay", default: false) }
+        set { defaults.set(newValue, forKey: "ShowVersionOverlay") }
+    }
+    static var showDebugHUD: Bool {
+        get { simple("ShowDebugHUD", default: false) }
+        set { defaults.set(newValue, forKey: "ShowDebugHUD") }
+    }
+    static var providerType: ProviderType {
+        get { codable("ProviderType", default: .plex) }
+        set { setCodable(newValue, forKey: "ProviderType") }
+    }
+    static var jellyfinServerURL: String {
+        get { simple("JellyfinServerURL", default: "") }
+        set { defaults.set(newValue, forKey: "JellyfinServerURL") }
+    }
+    static var jellyfinUsername: String {
+        get { simple("JellyfinUsername", default: "") }
+        set { defaults.set(newValue, forKey: "JellyfinUsername") }
+    }
+    static var jellyfinUserId: String {
+        get { simple("JellyfinUserId", default: "") }
+        set { defaults.set(newValue, forKey: "JellyfinUserId") }
     }
 
-    /// plex.tv account-wide token used for server discovery — the most
-    /// sensitive credential; stored in the Keychain.
-    static var plexAuthToken: String {
-        get { secret("PlexAuthToken") }
-        set { storeSecret("PlexAuthToken", newValue) }
+    private static var credentialRepository: CredentialRepository {
+        CredentialRepository(defaults: defaults, secrets: SystemSecretStore(service: AppConstants.module))
     }
-
-    @SimpleStorage(key: "GridRows", defaultValue: 3)
-    static var gridRows: Int
-
-    @SimpleStorage(key: "GridColumns", defaultValue: 4)
-    static var gridColumns: Int
-
-    /// When true, columns are computed per-display from the display bounds and
-    /// the source aspect (N4), keeping the user's row count. Default false keeps
-    /// the existing manual rows × columns behavior.
-    @SimpleStorage(key: "GridAutoColumns", defaultValue: false)
-    static var gridAutoColumns: Bool
-
-    @SimpleStorage(key: "RotationInterval", defaultValue: 5.0)
-    static var rotationInterval: Double
-
-    @Storage(key: "ImageSource", defaultValue: .fanart)
-    static var imageSource: ImageSourceType
-
-    @SimpleStorage(key: "IncludePostersInMixed", defaultValue: false)
-    static var includePostersInMixed: Bool
-
-    @Storage(key: "SelectedLibraryIds", defaultValue: [])
-    static var selectedLibraryIds: [String]
-
-    @SimpleStorage(key: "ShowTitleReveal", defaultValue: true)
-    static var showTitleReveal: Bool
-
-    @SimpleStorage(key: "TitleDisplayDuration", defaultValue: 2.0)
-    static var titleDisplayDuration: Double
-
-    /// Show the version pill on every activation (R4). Off by default — it's
-    /// noise on a screensaver — but always shown in the SaverTest app. Hidden
-    /// preference; set with `defaults` for troubleshooting.
-    @SimpleStorage(key: "ShowVersionOverlay", defaultValue: false)
-    static var showVersionOverlay: Bool
-
-    /// Show the read-only debug HUD (pool depth, reservation counts, last refill)
-    /// on every display (A2). Off by default; hidden preference set via `defaults`.
-    @SimpleStorage(key: "ShowDebugHUD", defaultValue: false)
-    static var showDebugHUD: Bool
-
-    // MARK: - Provider Selection
-
-    @Storage(key: "ProviderType", defaultValue: .plex)
-    static var providerType: ProviderType
-
-    // MARK: - Jellyfin Settings
-
-    @SimpleStorage(key: "JellyfinServerURL", defaultValue: "")
-    static var jellyfinServerURL: String
-
-    @SimpleStorage(key: "JellyfinUsername", defaultValue: "")
-    static var jellyfinUsername: String
-
-    /// Jellyfin access token — stored in the Keychain.
-    static var jellyfinAccessToken: String {
-        get { secret("JellyfinAccessToken") }
-        set { storeSecret("JellyfinAccessToken", newValue) }
+    static func readCredential(_ key: String, migrateLegacy: Bool = false, allowInteraction: Bool = false) async throws -> String {
+        let repository = credentialRepository
+        return try await Task.detached { try repository.read(key, migrateLegacy: migrateLegacy, allowInteraction: allowInteraction) }.value
     }
-
-    @SimpleStorage(key: "JellyfinUserId", defaultValue: "")
-    static var jellyfinUserId: String
-
-    // MARK: - Secret Storage (Keychain with defaults fallback)
-
-    /// Read a secret from the Keychain, migrating any legacy plaintext value
-    /// found in defaults. Falls back to the defaults value if the Keychain is
-    /// unavailable so persistence never breaks.
-    private static func secret(_ key: String) -> String {
-        if let value = KeychainStore.get(key), !value.isEmpty {
-            return value
-        }
-        // Legacy migration / fallback: read any plaintext value written by an
-        // older build (or by the fallback path below).
-        if let defaults = ScreenSaverDefaults(forModuleWithName: AppConstants.module),
-           let legacy = defaults.string(forKey: key), !legacy.isEmpty {
-            if KeychainStore.set(key, legacy) {
-                // Migrated into the Keychain — remove the plaintext copy.
-                defaults.removeObject(forKey: key)
-                defaults.synchronize()
-            }
-            return legacy
-        }
-        return ""
+    static func saveCredential(_ key: String, value: String) async throws {
+        let repository = credentialRepository
+        try await Task.detached { try repository.save(key, value: value) }.value
     }
-
-    /// Persist a secret to the Keychain, falling back to defaults if the
-    /// Keychain is unavailable in this host process.
-    private static func storeSecret(_ key: String, _ value: String) {
-        let defaults = ScreenSaverDefaults(forModuleWithName: AppConstants.module)
-        if KeychainStore.set(key, value) {
-            // Stored securely — ensure no stale plaintext copy remains.
-            defaults?.removeObject(forKey: key)
-            defaults?.synchronize()
-        } else {
-            // Keychain unavailable — preserve functionality via defaults.
-            defaults?.set(value, forKey: key)
-            defaults?.synchronize()
+    static func clearCredential(_ key: String) async throws {
+        let repository = credentialRepository
+        try await Task.detached { try repository.clear(key) }.value
+    }
+    static var connectionProfile: ConnectionProfile {
+        switch providerType {
+        case .plex: return ConnectionProfile(provider: .plex, serverURL: plexServerURL, accountID: plexAccountID, serverID: plexServerID)
+        case .jellyfin: return ConnectionProfile(provider: .jellyfin, serverURL: jellyfinServerURL, accountID: jellyfinUserId)
         }
     }
-}
-
-// MARK: - Property Wrappers
-
-@propertyWrapper struct Storage<T: Codable> {
-    private let key: String
-    private let defaultValue: T
-    private let module = AppConstants.module
-
-    init(key: String, defaultValue: T) {
-        self.key = key
-        self.defaultValue = defaultValue
+    static func connectionSnapshot(credentialReader: @Sendable (String) async throws -> String = { key in
+        try await Preferences.readCredential(key, migrateLegacy: true)
+    }) async throws -> ConnectionSnapshot {
+        let profile = connectionProfile
+        let token = try await credentialReader(profile.provider == .plex ? "PlexToken" : "JellyfinAccessToken")
+        try Task.checkCancellation()
+        guard connectionProfile == profile, connectionProfile.serverURL == profile.serverURL else { throw CancellationError() }
+        return ConnectionSnapshot(provider: profile.provider, serverURL: profile.serverURL, token: token,
+                                  userID: profile.provider == .jellyfin ? profile.accountID : "", accountID: profile.accountID, serverID: profile.serverID, fallbackURLs: profile.provider == .plex ? plexFallbackURLs : [])
+    }
+    /// Compatibility fingerprint used only to verify migration of pre-stable-ID profiles.
+    static func legacyPlexAccountIdentifier(for token: String) -> String {
+        SHA256.hash(data: Data(token.utf8)).map { String(format: "%02x", $0) }.joined()
     }
 
-    var wrappedValue: T {
-        get {
-            if let userDefaults = ScreenSaverDefaults(forModuleWithName: module) {
-                guard let jsonString = userDefaults.string(forKey: key),
-                      let jsonData = jsonString.data(using: .utf8),
-                      let value = try? JSONDecoder().decode(T.self, from: jsonData) else {
-                    return defaultValue
-                }
-                return value
-            }
-            return defaultValue
-        }
-        set {
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.prettyPrinted]
-            if let jsonData = try? encoder.encode(newValue),
-               let jsonString = String(data: jsonData, encoding: .utf8),
-               let userDefaults = ScreenSaverDefaults(forModuleWithName: module) {
-                userDefaults.set(jsonString, forKey: key)
-                userDefaults.synchronize()
-            }
-        }
-    }
-}
-
-@propertyWrapper struct SimpleStorage<T> {
-    private let key: String
-    private let defaultValue: T
-    private let module = AppConstants.module
-
-    init(key: String, defaultValue: T) {
-        self.key = key
-        self.defaultValue = defaultValue
+    static func isLegacyPlexAccountIdentifier(_ value: String) -> Bool {
+        value.count == 64 && value.allSatisfy { "0123456789abcdef".contains($0) }
     }
 
-    var wrappedValue: T {
-        get {
-            if let userDefaults = ScreenSaverDefaults(forModuleWithName: module) {
-                return userDefaults.object(forKey: key) as? T ?? defaultValue
-            }
-            return defaultValue
+    static func librarySelection(for profile: ConnectionProfile) -> LibrarySelection {
+        if let data = defaults.data(forKey: "LibrarySelection.\(profile.namespace)"),
+           let selection = try? JSONDecoder().decode(LibrarySelection.self, from: data) { return selection }
+        // Import the old global selection only into the currently active profile.
+        // Old empty values meant All; new explicit empty selections mean None.
+        if profile == connectionProfile && !defaults.bool(forKey: "LibrarySelectionMigrated") {
+            let ids = Set(selectedLibraryIds)
+            return ids.isEmpty ? .all : .selected(ids)
         }
-        set {
-            if let userDefaults = ScreenSaverDefaults(forModuleWithName: module) {
-                userDefaults.set(newValue, forKey: key)
-                userDefaults.synchronize()
-            }
-        }
+        return .all
+    }
+    static func saveLibrarySelection(_ selection: LibrarySelection, for profile: ConnectionProfile) {
+        if let data = try? JSONEncoder().encode(selection) { defaults.set(data, forKey: "LibrarySelection.\(profile.namespace)") }
+        if profile == connectionProfile { defaults.set(true, forKey: "LibrarySelectionMigrated") }
+        defaults.synchronize()
+    }
+    static func settingsSnapshot() -> SaverSettings {
+        // Migration is evaluated without writing anything while Options loads.
+        let source = !defaults.bool(forKey: "ArtworkChoicesMigrated") && imageSource == .mixed && !includePostersInMixed ? ImageSourceType.fanart : imageSource
+        return SaverSettings(rows: gridRows, columns: gridColumns, autoColumns: gridAutoColumns,
+                             rotationInterval: rotationInterval, imageSource: source,
+                             showTitleReveal: showTitleReveal, titleDisplayDuration: titleDisplayDuration,
+                             librarySelection: librarySelection(for: connectionProfile))
+    }
+    static func saveSettings(_ settings: SaverSettings, profile: ConnectionProfile) {
+        gridRows = settings.rows; gridColumns = settings.columns; gridAutoColumns = settings.autoColumns
+        rotationInterval = settings.rotationInterval; imageSource = settings.imageSource
+        includePostersInMixed = true; showTitleReveal = settings.showTitleReveal; titleDisplayDuration = settings.titleDisplayDuration
+        saveLibrarySelection(settings.librarySelection, for: profile)
+        defaults.set(true, forKey: "ArtworkChoicesMigrated")
+        defaults.synchronize()
     }
 }

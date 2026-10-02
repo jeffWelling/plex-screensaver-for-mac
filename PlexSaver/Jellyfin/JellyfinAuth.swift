@@ -41,38 +41,32 @@ actor JellyfinAuth {
         return newId
     }()
 
-    /// Authenticate with username and password
-    /// Returns (accessToken, userId) on success
-    func authenticate(serverURL: String, username: String, password: String) async throws -> (accessToken: String, userId: String) {
-        let baseURL = serverURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        guard let url = URL(string: "\(baseURL)/Users/AuthenticateByName") else {
-            throw JellyfinError.invalidURL
-        }
+    private let transport: any NetworkTransport
 
+    init(transport: any NetworkTransport = URLSessionTransport()) {
+        self.transport = transport
+    }
+
+    static func authorizationHeader(token: String? = nil) throws -> String {
+        let version = Bundle(for: MontageView.self).object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.6.0"
+        var value = "MediaBrowser Client=\"Montage\", Device=\"Mac\", DeviceId=\"\(try validatedCredential(deviceId))\", Version=\"\(try validatedCredential(version))\""
+        if let token { value += ", Token=\"\(try validatedCredential(token))\"" }
+        return value
+    }
+
+    /// The password is sent only for this request and never persisted.
+    func authenticate(serverURL: String, username: String, password: String) async throws -> (accessToken: String, userId: String) {
+        let url = try ServerEndpoint(serverURL).url(path: "/Users/AuthenticateByName")
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-
-        // Initial auth header without token
-        let authHeader = "MediaBrowser Client=\"Montage\", Device=\"Mac\", DeviceId=\"\(JellyfinAuth.deviceId)\", Version=\"1.0\""
-        request.setValue(authHeader, forHTTPHeaderField: "Authorization")
-
-        let body: [String: String] = [
-            "Username": username,
-            "Pw": password
-        ]
-        request.httpBody = try JSONEncoder().encode(body)
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-
-        guard let httpResponse = response as? HTTPURLResponse,
-              (200...299).contains(httpResponse.statusCode) else {
-            throw JellyfinError.authenticationFailed
-        }
-
-        let authResponse = try JSONDecoder().decode(JellyfinAuthResponse.self, from: data)
-
-        return (accessToken: authResponse.accessToken, userId: authResponse.user.id)
+        request.setValue(try Self.authorizationHeader(), forHTTPHeaderField: "Authorization")
+        request.httpBody = try JSONEncoder().encode(["Username": username, "Pw": password])
+        let data = try await transport.data(for: request, maximumBytes: URLSessionTransport.maximumJSONBytes)
+        let response = try JSONDecoder().decode(JellyfinAuthResponse.self, from: data)
+        _ = try validatedCredential(response.accessToken)
+        guard !response.user.id.isEmpty else { throw MediaNetworkError.invalidResponse }
+        return (accessToken: response.accessToken, userId: response.user.id)
     }
 }

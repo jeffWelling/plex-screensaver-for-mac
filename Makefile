@@ -1,72 +1,53 @@
-SCHEME = PlexSaver
-CONFIG = Release
-PBXPROJ = PlexSaver.xcodeproj/project.pbxproj
-SAVER_DIR = $(HOME)/Library/Screen Savers
-DERIVED_DATA = $(HOME)/Library/Developer/Xcode/DerivedData
+SCHEME ?= PlexSaver
+CONFIG ?= Release
+BUILD_ROOT ?= $(CURDIR)/build/xcode
+SAVER_DIR ?= $(HOME)/Library/Screen Savers
+BUILT_SAVER = $(BUILD_ROOT)/Build/Products/$(CONFIG)/PlexSaver.saver
+CODE_SIGNING_ALLOWED ?= NO
 
-# Extract version from pbxproj (first match)
-VERSION := $(shell grep '^\s*MARKETING_VERSION = ' $(PBXPROJ) | head -1 | sed 's/.*= //;s/;//')
-BUILD := $(shell grep '^\s*CURRENT_PROJECT_VERSION = ' $(PBXPROJ) | head -1 | sed 's/.*= //;s/;//')
-BUNDLE_NAME = Montage_v$(VERSION).saver
+VERSION := $(shell sed -n 's/^MARKETING_VERSION = //p' Version.xcconfig)
+BUILD := $(shell sed -n 's/^CURRENT_PROJECT_VERSION = //p' Version.xcconfig)
 
-.PHONY: build clean install uninstall version bump-patch bump-minor bump-major test
+.PHONY: build clean install uninstall version bump-patch bump-minor bump-major test validate archive release
 
-build: clean
-	xcodebuild -scheme $(SCHEME) -configuration $(CONFIG) build
+# Incremental, isolated build output; never searches or deletes global DerivedData.
+build:
+	xcodebuild -project PlexSaver.xcodeproj -scheme "$(SCHEME)" -configuration "$(CONFIG)" -derivedDataPath "$(BUILD_ROOT)" ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=$(CODE_SIGNING_ALLOWED) build
 
 clean:
-	xcodebuild -scheme $(SCHEME) -configuration $(CONFIG) clean 2>/dev/null || true
-	@# Also nuke DerivedData for this project to avoid stale binaries
-	rm -rf "$(DERIVED_DATA)"/PlexSaver-*/ "$(DERIVED_DATA)"/Montage-*/
+	xcodebuild -project PlexSaver.xcodeproj -scheme "$(SCHEME)" -configuration "$(CONFIG)" -derivedDataPath "$(BUILD_ROOT)" clean
 
+validate: override SCHEME = PlexSaver
+validate: | build
+	python3 scripts/install.py --source "$(BUILT_SAVER)" --destination "$(SAVER_DIR)" --check-only
+
+install: override SCHEME = PlexSaver
 install: build
-	@# Remove any existing Montage*.saver or PlexSaver*.saver bundles
-	rm -rf "$(SAVER_DIR)"/Montage*.saver "$(SAVER_DIR)"/PlexSaver*.saver
-	@# Find the built .saver and copy with versioned name
-	$(eval BUILD_DIR := $(shell find "$(DERIVED_DATA)" -path "*/Build/Products/$(CONFIG)/PlexSaver.saver" -maxdepth 5 2>/dev/null | head -1))
-	@if [ -z "$(BUILD_DIR)" ]; then echo "ERROR: Built .saver not found"; exit 1; fi
-	cp -R "$(BUILD_DIR)" "$(SAVER_DIR)/$(BUNDLE_NAME)"
-	@echo ""
-	@echo "Installed: $(BUNDLE_NAME)"
-	@echo "Version:   $(VERSION) (build $(BUILD))"
-	@echo ""
-	@echo "Restart System Settings or log out/in to load the new binary."
+	python3 scripts/install.py --source "$(BUILT_SAVER)" --destination "$(SAVER_DIR)"
 
 uninstall:
-	rm -rf "$(SAVER_DIR)"/Montage*.saver "$(SAVER_DIR)"/PlexSaver*.saver
-	@echo "Removed all Montage screensaver bundles."
+	python3 scripts/install.py --destination "$(SAVER_DIR)" --uninstall
 
 version:
-	@echo "Source:    $(VERSION) (build $(BUILD))"
-	@INSTALLED=$$(ls -d "$(SAVER_DIR)"/Montage*.saver 2>/dev/null | head -1); \
-	if [ -n "$$INSTALLED" ]; then \
-		IVERSION=$$(defaults read "$$INSTALLED/Contents/Info" CFBundleShortVersionString 2>/dev/null || echo "?"); \
-		IBUILD=$$(defaults read "$$INSTALLED/Contents/Info" CFBundleVersion 2>/dev/null || echo "?"); \
-		echo "Installed: $$IVERSION (build $$IBUILD) — $$(basename "$$INSTALLED")"; \
-	else \
-		echo "Installed: (none)"; \
-	fi
+	@echo "Source: $(VERSION) (build $(BUILD))"
+	@python3 scripts/install.py --destination "$(SAVER_DIR)" --version
 
-bump-patch:
-	@NEW=$$(echo $(VERSION) | awk -F. '{printf "%d.%d.%d", $$1, $$2, $$3+1}'); \
-	sed -i '' "s/MARKETING_VERSION = $(VERSION)/MARKETING_VERSION = $$NEW/g" $(PBXPROJ); \
-	NEWBUILD=$$(($(BUILD) + 1)); \
-	sed -i '' "s/CURRENT_PROJECT_VERSION = $(BUILD)/CURRENT_PROJECT_VERSION = $$NEWBUILD/g" $(PBXPROJ); \
-	echo "Bumped: $(VERSION) ($(BUILD)) -> $$NEW ($$NEWBUILD)"
-
-bump-minor:
-	@NEW=$$(echo $(VERSION) | awk -F. '{printf "%d.%d.%d", $$1, $$2+1, 0}'); \
-	sed -i '' "s/MARKETING_VERSION = $(VERSION)/MARKETING_VERSION = $$NEW/g" $(PBXPROJ); \
-	NEWBUILD=$$(($(BUILD) + 1)); \
-	sed -i '' "s/CURRENT_PROJECT_VERSION = $(BUILD)/CURRENT_PROJECT_VERSION = $$NEWBUILD/g" $(PBXPROJ); \
-	echo "Bumped: $(VERSION) ($(BUILD)) -> $$NEW ($$NEWBUILD)"
-
-bump-major:
-	@NEW=$$(echo $(VERSION) | awk -F. '{printf "%d.%d.%d", $$1+1, 0, 0}'); \
-	sed -i '' "s/MARKETING_VERSION = $(VERSION)/MARKETING_VERSION = $$NEW/g" $(PBXPROJ); \
-	NEWBUILD=$$(($(BUILD) + 1)); \
-	sed -i '' "s/CURRENT_PROJECT_VERSION = $(BUILD)/CURRENT_PROJECT_VERSION = $$NEWBUILD/g" $(PBXPROJ); \
-	echo "Bumped: $(VERSION) ($(BUILD)) -> $$NEW ($$NEWBUILD)"
+bump-patch bump-minor bump-major:
+	python3 scripts/bump-version.py "$(@:bump-%=%)"
 
 test:
-	swift test
+	python3 -B -m unittest discover -s scripts/tests
+	swift test -Xswiftc -strict-concurrency=complete
+
+archive: override SCHEME = PlexSaver
+archive: build validate
+	mkdir -p build/release
+	@set -eu; STAGING=$$(mktemp -d "$(CURDIR)/build/release/.archive-XXXXXX"); \
+	trap 'rm -rf "$$STAGING"' EXIT HUP INT TERM; \
+	ditto "$(BUILT_SAVER)" "$$STAGING/Montage.saver" && \
+	ditto -c -k --sequesterRsrc --keepParent "$$STAGING/Montage.saver" "$$STAGING/Montage.saver.zip" && \
+	mv -f "$$STAGING/Montage.saver.zip" "$(CURDIR)/build/release/Montage.saver.zip"
+
+# Signing and notarization need an explicitly supplied identity/profile.
+release:
+	bash scripts/release.sh --notarize

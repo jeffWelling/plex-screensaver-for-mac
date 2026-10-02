@@ -16,6 +16,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		AA0000141DC38B790019C16F /* Version.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Version.xcconfig; sourceTree = "<group>"; };
 		AA0000021B644187008A2D6A /* MontageView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = MontageView.swift; sourceTree = "<group>"; };
 		AA0000052E353CD900C4EA3C /* MontageRepresentable.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MontageRepresentable.swift; sourceTree = "<group>"; };
 		AA0000072E353CD900C4EA3C /* MontageTestApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MontageTestApp.swift; sourceTree = "<group>"; };
@@ -62,6 +63,7 @@
 				CC0000021B644145008A2D6A /* PlexSaver */,
 				CC0000031DC38B790019C16F /* SaverTest */,
 				CC0000041B644145008A2D6A /* Products */,
+				AA0000141DC38B790019C16F /* Version.xcconfig */,
 			);
 			sourceTree = "<group>";
 		};
@@ -313,6 +315,7 @@
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = macosx;
 				SWIFT_VERSION = 5.0;
+				SWIFT_STRICT_CONCURRENCY = complete;
 			};
 			name = Debug;
 		};
@@ -365,62 +368,64 @@
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_OPTIMIZATION_LEVEL = "-O";
 				SWIFT_VERSION = 5.0;
+				SWIFT_STRICT_CONCURRENCY = complete;
 			};
 			name = Release;
 		};
 		FF0000201B644145008A2D6A /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = AA0000141DC38B790019C16F /* Version.xcconfig */;
 			buildSettings = {
 				CLANG_ENABLE_MODULES = YES;
 				COMBINE_HIDPI_IMAGES = NO;
 				DEAD_CODE_STRIPPING = YES;
 				INFOPLIST_FILE = PlexSaver/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = "Montage v$(MARKETING_VERSION)";
+				INFOPLIST_KEY_CFBundleDisplayName = Montage;
 				INSTALL_PATH = "$(HOME)/Library/Screen Savers";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 					"@loader_path/../Frameworks",
 				);
-				CURRENT_PROJECT_VERSION = 15;
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
-				MARKETING_VERSION = 0.5.6;
 				PRODUCT_BUNDLE_IDENTIFIER = com.montage.Montage;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 5.0;
+				SWIFT_STRICT_CONCURRENCY = complete;
 				WRAPPER_EXTENSION = saver;
 			};
 			name = Debug;
 		};
 		FF0000211B644145008A2D6A /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = AA0000141DC38B790019C16F /* Version.xcconfig */;
 			buildSettings = {
 				CLANG_ENABLE_MODULES = YES;
 				COMBINE_HIDPI_IMAGES = NO;
 				DEAD_CODE_STRIPPING = YES;
 				INFOPLIST_FILE = PlexSaver/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = "Montage v$(MARKETING_VERSION)";
+				INFOPLIST_KEY_CFBundleDisplayName = Montage;
 				INSTALL_PATH = "$(HOME)/Library/Screen Savers";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 					"@loader_path/../Frameworks",
 				);
-				CURRENT_PROJECT_VERSION = 15;
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
-				MARKETING_VERSION = 0.5.6;
 				PRODUCT_BUNDLE_IDENTIFIER = com.montage.Montage;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_OPTIMIZATION_LEVEL = "-O";
 				SWIFT_VERSION = 5.0;
+				SWIFT_STRICT_CONCURRENCY = complete;
 				WRAPPER_EXTENSION = saver;
 			};
 			name = Release;
 		};
 		FF0000301DC38B790019C16F /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = AA0000141DC38B790019C16F /* Version.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ANALYZER_NONNULL = YES;
@@ -436,19 +441,19 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				CURRENT_PROJECT_VERSION = 15;
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
-				MARKETING_VERSION = 0.5.6;
-				PRODUCT_BUNDLE_IDENTIFIER = com.montage.MontageTest;
+				PRODUCT_BUNDLE_IDENTIFIER = com.montage.SaverTest;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 5.0;
+				SWIFT_STRICT_CONCURRENCY = complete;
 			};
 			name = Debug;
 		};
 		FF0000311DC38B790019C16F /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = AA0000141DC38B790019C16F /* Version.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ANALYZER_NONNULL = YES;
@@ -463,12 +468,11 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				CURRENT_PROJECT_VERSION = 15;
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
-				MARKETING_VERSION = 0.5.6;
-				PRODUCT_BUNDLE_IDENTIFIER = com.montage.MontageTest;
+				PRODUCT_BUNDLE_IDENTIFIER = com.montage.SaverTest;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_VERSION = 5.0;
+				SWIFT_STRICT_CONCURRENCY = complete;
 			};
 			name = Release;
 		};

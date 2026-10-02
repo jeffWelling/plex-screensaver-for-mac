@@ -1,109 +1,85 @@
-//
-//  PlexClient.swift
-//  PlexSaver
-//
-
-import Foundation
 import AppKit
-import os.log
 
 actor PlexClient {
-    private let serverURL: String
+    private var serverURL: String
+    private let fallbackURLs: [String]
     private let token: String
-    private let session: URLSession
+    private let transport: any NetworkTransport
 
-    init(serverURL: String, token: String) {
-        // Strip trailing slash
-        self.serverURL = serverURL.hasSuffix("/") ? String(serverURL.dropLast()) : serverURL
+    init(serverURL: String, token: String, fallbackURLs: [String] = [], transport: any NetworkTransport = URLSessionTransport()) {
+        self.serverURL = serverURL
+        self.fallbackURLs = fallbackURLs
         self.token = token
-        let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 15
-        config.timeoutIntervalForResource = 60
-        self.session = URLSession(configuration: config)
+        self.transport = transport
     }
-
-    // MARK: - Public API
 
     func fetchLibraries() async throws -> [PlexLibrary] {
         let data = try await request(path: "/library/sections")
-        let response = try JSONDecoder().decode(PlexLibrarySectionsResponse.self, from: data)
-        return response.MediaContainer.Directory ?? []
+        return try JSONDecoder().decode(PlexLibrarySectionsResponse.self, from: data).MediaContainer.Directory ?? []
     }
 
     func fetchAllItems(sectionId: String) async throws -> [PlexMediaItem] {
-        let data = try await request(path: "/library/sections/\(sectionId)/all")
-        let response = try JSONDecoder().decode(PlexMediaItemsResponse.self, from: data)
-        return response.MediaContainer.Metadata ?? []
+        let pageSize = 500
+        var offset = 0
+        var result: [PlexMediaItem] = []
+        var seen = Set<String>()
+        while true {
+            try Task.checkCancellation()
+            let data = try await request(path: "/library/sections/\(ServerEndpoint.pathComponent(sectionId))/all", query: [
+                URLQueryItem(name: "X-Plex-Container-Start", value: String(offset)),
+                URLQueryItem(name: "X-Plex-Container-Size", value: String(pageSize))
+            ])
+            let container = try JSONDecoder().decode(PlexMediaItemsResponse.self, from: data).MediaContainer
+            let page = container.Metadata ?? []
+            let fresh = page.filter { seen.insert($0.ratingKey).inserted }
+            result.append(contentsOf: fresh)
+            offset += page.count
+            // Some Plex versions ignore pagination. Detect repeats rather than
+            // issuing requests forever or duplicating the whole catalogue.
+            if page.isEmpty || fresh.isEmpty || (container.totalSize == nil && page.count < pageSize) || offset >= (container.totalSize ?? Int.max) {
+                return result
+            }
+            guard offset <= 250_000 else { throw MediaNetworkError.oversizedPayload }
+        }
     }
 
     func fetchImage(imagePath: String, width: Int, height: Int) async throws -> NSImage {
-        let transcodeURL = buildTranscodeURL(imagePath: imagePath, width: width, height: height)
-        guard let url = URL(string: transcodeURL) else {
-            throw PlexError.invalidURL
-        }
-
-        var request = URLRequest(url: url)
-        request.setValue(token, forHTTPHeaderField: "X-Plex-Token")
-
-        let (data, response) = try await session.data(for: request)
-
-        guard let httpResponse = response as? HTTPURLResponse,
-              (200...299).contains(httpResponse.statusCode) else {
-            throw PlexError.httpError((response as? HTTPURLResponse)?.statusCode ?? 0)
-        }
-
-        guard let image = NSImage(data: data) else {
-            throw PlexError.invalidImageData
-        }
-
-        return image
+        let data = try await request(path: "/photo/:/transcode", query: [
+            URLQueryItem(name: "url", value: imagePath),
+            URLQueryItem(name: "width", value: String(width)),
+            URLQueryItem(name: "height", value: String(height)),
+            URLQueryItem(name: "minSize", value: "1")
+        ], maximumBytes: URLSessionTransport.maximumImageBytes)
+        return try ArtworkDecoder.decode(data, width: width, height: height)
     }
 
-    // MARK: - Private Helpers
-
-    private func request(path: String) async throws -> Data {
-        guard let url = URL(string: "\(serverURL)\(path)") else {
-            throw PlexError.invalidURL
+    private func request(path: String, query: [URLQueryItem] = [],
+                         maximumBytes: Int = URLSessionTransport.maximumJSONBytes) async throws -> Data {
+        let active = try ServerEndpoint(serverURL)
+        // Fallbacks are advertised connections to the same physical server.
+        // An explicitly configured HTTP origin may upgrade, but an HTTPS origin
+        // can never silently downgrade when it becomes unavailable.
+        var endpoints = [active]
+        for value in fallbackURLs {
+            if let endpoint = try? ServerEndpoint(value), endpoint.isSecure, !endpoints.contains(endpoint) {
+                endpoints.append(endpoint)
+            }
         }
-
-        var request = URLRequest(url: url)
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue(token, forHTTPHeaderField: "X-Plex-Token")
-
-        let (data, response) = try await session.data(for: request)
-
-        guard let httpResponse = response as? HTTPURLResponse,
-              (200...299).contains(httpResponse.statusCode) else {
-            throw PlexError.httpError((response as? HTTPURLResponse)?.statusCode ?? 0)
+        let credential = try validatedCredential(token)
+        for (index, endpoint) in endpoints.enumerated() {
+            try Task.checkCancellation()
+            var request = URLRequest(url: try endpoint.url(path: path, query: query))
+            request.setValue("application/json", forHTTPHeaderField: "Accept")
+            request.setValue(credential, forHTTPHeaderField: "X-Plex-Token")
+            do {
+                let data = try await transport.data(for: request, maximumBytes: maximumBytes)
+                try Task.checkCancellation()
+                serverURL = endpoint.canonicalURLString
+                return data
+            } catch MediaNetworkError.unavailable where index < endpoints.count - 1 {
+                continue
+            }
         }
-
-        return data
-    }
-
-    private func buildTranscodeURL(imagePath: String, width: Int, height: Int) -> String {
-        // Encode with only RFC 3986 unreserved characters so that reserved
-        // characters in the inner path (notably `+`, `&`, `=`, `?`) are escaped
-        // and cannot corrupt the outer query string. `.urlQueryAllowed` leaves
-        // those intact, which breaks the `url=` parameter.
-        var allowed = CharacterSet.alphanumerics
-        allowed.insert(charactersIn: "-._~")
-        let encodedPath = imagePath.addingPercentEncoding(withAllowedCharacters: allowed) ?? imagePath
-        return "\(serverURL)/photo/:/transcode?url=\(encodedPath)&width=\(width)&height=\(height)&minSize=1"
-    }
-}
-
-// MARK: - Errors
-
-enum PlexError: LocalizedError {
-    case invalidURL
-    case httpError(Int)
-    case invalidImageData
-
-    var errorDescription: String? {
-        switch self {
-        case .invalidURL: return "Invalid Plex server URL"
-        case .httpError(let code): return "HTTP error \(code)"
-        case .invalidImageData: return "Invalid image data received"
-        }
+        throw MediaNetworkError.unavailable
     }
 }

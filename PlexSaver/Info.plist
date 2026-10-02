@@ -11,9 +11,9 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleDisplayName</key>
-	<string>Montage v$(MARKETING_VERSION)</string>
+	<string>Montage</string>
 	<key>CFBundleName</key>
-	<string>Montage v$(MARKETING_VERSION)</string>
+	<string>Montage</string>
 	<key>CFBundlePackageType</key>
 	<string>BNDL</string>
 	<key>CFBundleShortVersionString</key>

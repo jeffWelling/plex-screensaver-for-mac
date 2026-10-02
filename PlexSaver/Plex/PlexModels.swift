@@ -31,6 +31,7 @@ struct PlexMediaItemsResponse: Decodable {
 
 struct PlexMediaContainer: Decodable {
     let Metadata: [PlexMediaItem]?
+    let totalSize: Int?
 }
 
 struct PlexMediaItem: Decodable {
@@ -79,7 +80,8 @@ extension PlexMediaItem {
             id: ratingKey,
             title: title,
             year: year,
-            artPaths: paths
+            artPaths: paths,
+            mediaType: type.map { $0 == "show" ? "series" : $0.lowercased() }
         )
     }
 }
