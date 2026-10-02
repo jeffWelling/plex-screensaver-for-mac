@@ -4,6 +4,7 @@
 
 import AppKit
 import CryptoKit
+import ImageIO
 import Darwin
 import os.log
 
@@ -11,6 +12,16 @@ struct DiskCacheSummary: Sendable {
     let count: Int
     let sizeBytes: Int64
     let lastRefresh: Date?
+    let lastPreparedDate: Date?
+}
+
+struct CachedArtworkDescriptor: Sendable {
+    let artPath: String
+    let item: MediaItem
+    let source: ImageSourceType
+    let width: Int
+    let height: Int
+    let downloadedAt: Date
 }
 
 struct CachedArtwork {
@@ -78,8 +89,8 @@ actor DiskCache {
         transaction {
             DiskCacheSummary(count: manifest.entries.count,
                              sizeBytes: manifest.entries.reduce(0) { $0 + $1.size },
-                             lastRefresh: manifest.lastRefresh)
-        } ?? DiskCacheSummary(count: 0, sizeBytes: 0, lastRefresh: nil)
+                             lastRefresh: manifest.lastRefresh, lastPreparedDate: manifest.lastPreparedDate)
+        } ?? DiskCacheSummary(count: 0, sizeBytes: 0, lastRefresh: nil, lastPreparedDate: nil)
     }
 
     /// Only sufficiently large variants satisfy an online request. Stale
@@ -115,13 +126,17 @@ actor DiskCache {
     func cachedImages(limit: Int, selection: LibrarySelection,
                       imageSource: ImageSourceType, includePostersInMixed: Bool = true,
                       width: Int, height: Int,
-                      decodedByteLimit: Int = ImagePool.queueByteLimit) -> [CachedArtwork] {
+                      decodedByteLimit: Int = ImagePool.queueByteLimit,
+                      filter: MediaFilter = MediaFilter(), recentTitleDates: [String: Date] = [:]) -> [CachedArtwork] {
         transaction {
             let candidates = manifest.entries.filter { entry in
-                guard selection.includes(entry.item.libraryId) else { return false }
+                guard selection.includes(entry.item.libraryId), filter.matches(entry.item) else { return false }
                 return imageSource == entry.source ||
                     (imageSource == .mixed && (includePostersInMixed || entry.source == .fanart))
             }.sorted {
+                let seenA = recentTitleDates[RecentTitleHistory.digest($0.item.titleKey)]
+                let seenB = recentTitleDates[RecentTitleHistory.digest($1.item.titleKey)]
+                if seenA != seenB { return (seenA ?? .distantPast) < (seenB ?? .distantPast) }
                 let adequateA = $0.width >= width && $0.height >= height
                 let adequateB = $1.width >= width && $1.height >= height
                 if adequateA != adequateB { return adequateA }
@@ -148,6 +163,66 @@ actor DiskCache {
             }
             return results
         } ?? []
+    }
+
+    /// Read image headers without retaining decoded bitmaps. Count titles, not
+    /// size variants, and keep stale artwork available for offline readiness.
+    func availableArtwork(selection: LibrarySelection, imageSource: ImageSourceType,
+                          filter: MediaFilter = MediaFilter(), width: Int, height: Int,
+                          requireAdequateSize: Bool = true) -> [CachedArtworkDescriptor] {
+        transaction {
+            var seenTitles = Set<String>()
+            var result: [CachedArtworkDescriptor] = []
+            for entry in manifest.entries.sorted(by: { $0.downloadedAt > $1.downloadedAt }) {
+                guard !Task.isCancelled else { break }
+                guard selection.includes(entry.item.libraryId), filter.matches(entry.item),
+                      imageSource == .mixed || imageSource == entry.source,
+                      !seenTitles.contains(entry.item.titleKey),
+                      !requireAdequateSize || (entry.width >= width && entry.height >= height),
+                      let dimensions = imageDimensions(directory.appendingPathComponent(entry.filename)),
+                      !requireAdequateSize || (dimensions.width >= width && dimensions.height >= height) else { continue }
+                seenTitles.insert(entry.item.titleKey)
+                result.append(CachedArtworkDescriptor(artPath: entry.artPath, item: entry.item,
+                    source: entry.source, width: entry.width, height: entry.height, downloadedAt: entry.downloadedAt))
+            }
+            return result
+        } ?? []
+    }
+
+    /// Update metadata after a successful catalog fetch without deleting the
+    /// artwork that still makes an unavailable server usable offline.
+    func refreshMetadata(_ items: [MediaItem], libraryIDs: [String]) {
+        _ = transaction {
+            let libraries = Set(libraryIDs)
+            var catalog: [String: MediaItem] = [:]
+            for item in items {
+                guard let library = item.libraryId, libraries.contains(library) else { continue }
+                catalog["\(library)|\(item.id)"] = item
+            }
+            for index in manifest.entries.indices {
+                let entry = manifest.entries[index]
+                guard let library = entry.item.libraryId, libraries.contains(library),
+                      let item = catalog["\(library)|\(entry.item.id)"] else { continue }
+                manifest.entries[index].item = item
+            }
+        }
+    }
+
+    func markPreparationCompleted(_ date: Date? = nil) {
+        _ = transaction { manifest.lastPreparedDate = date ?? now() }
+    }
+
+    private func imageDimensions(_ url: URL) -> (width: Int, height: Int)? {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let size = attributes[.size] as? NSNumber,
+              size.intValue > 0, size.intValue <= URLSessionTransport.maximumImageBytes,
+              let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
+              CGImageSourceGetStatusAtIndex(source, 0) == .statusComplete,
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? NSNumber,
+              let height = properties[kCGImagePropertyPixelHeight] as? NSNumber,
+              width.intValue > 0, height.intValue > 0 else { return nil }
+        return (width.intValue, height.intValue)
     }
 
     /// JPEG encoding uses the already prepared CGImage directly, avoiding a
@@ -265,6 +340,7 @@ private struct CacheManifest: Codable {
     var version = 2
     var namespace: String
     var lastRefresh: Date?
+    var lastPreparedDate: Date?
     var entries: [CacheEntry] = []
 }
 
@@ -275,7 +351,7 @@ private struct CacheEntry: Codable {
     let width: Int
     let height: Int
     let source: ImageSourceType
-    let item: MediaItem
+    var item: MediaItem
     let downloadedAt: Date
     var lastAccess: Date
 }
