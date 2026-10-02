@@ -206,7 +206,12 @@ class MontageView: ScreenSaverView {
             guard self.isCurrent(run), self.runtimePolicy == policy, let settings = self.settings else { return }
             if policy.pausesPlayback { return }
             if let pool = self.imagePool {
-                if policy.allowsNetwork && (!previous.allowsNetwork || self.availableItems == 0) {
+                let needsStartupResume = self.availableItems == 0 || (self.gridManager?.occupiedCellCount ?? 0) == 0
+                let cachedCount = await pool.restoreCachedCatalogueIfNeeded(selection: settings.librarySelection)
+                guard self.isCurrent(run), self.runtimePolicy == policy else { return }
+                self.availableItems = cachedCount
+                if needsStartupResume || previous.pausesPlayback || !policy.allowsNetwork
+                    || (!previous.allowsNetwork && policy.allowsNetwork) {
                     await self.refresh(pool: pool, settings: settings, generation: run, retryDelay: 30)
                 } else if policy.allowsNetwork {
                     self.scheduleRefresh(after: policy.refreshInterval, pool: pool, settings: settings,

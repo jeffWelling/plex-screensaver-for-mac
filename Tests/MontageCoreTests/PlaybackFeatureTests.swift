@@ -5,25 +5,47 @@ import QuartzCore
 
 private actor PlaybackFixtureProvider: MediaProvider {
     nonisolated let serverName = "Playback fixture"
+    nonisolated let requiresNetwork: Bool
     private let items: [MediaItem]
     private let image: NSImage
     private var requests = 0
     private var catalogRequests = 0
     private let suspended: Bool
+    private let missingPaths: Set<String>
     private var continuation: CheckedContinuation<NSImage, Never>?
-    init(items: [MediaItem], image: NSImage, suspended: Bool = false) {
+    init(items: [MediaItem], image: NSImage, suspended: Bool = false, requiresNetwork: Bool = true, missingPaths: Set<String> = []) {
         self.items = items; self.image = image; self.suspended = suspended
+        self.requiresNetwork = requiresNetwork; self.missingPaths = missingPaths
     }
     func fetchLibraries() async throws -> [MediaLibrary] { catalogRequests += 1; return [MediaLibrary(id: "library", name: "Library", type: "movies")] }
     func fetchItems(libraryId: String) async throws -> [MediaItem] { items }
     func fetchImage(path: String, width: Int, height: Int) async throws -> NSImage {
         requests += 1
+        if missingPaths.contains(path) { throw LocalArtworkError.missingArtwork }
         if suspended { return await withCheckedContinuation { continuation = $0 } }
         return image
     }
     func finishRequest() { continuation?.resume(returning: image); continuation = nil }
     var requestCount: Int { requests }
     var catalogCount: Int { catalogRequests }
+}
+
+private final class HistoryReadGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private let release = DispatchSemaphore(value: 0)
+    private var shouldBlock = true
+    private var entered = false
+    func now() -> Date {
+        lock.lock()
+        let blocking = shouldBlock
+        shouldBlock = false
+        if blocking { entered = true }
+        lock.unlock()
+        if blocking { _ = release.wait(timeout: .now() + 5) }
+        return Date()
+    }
+    var isWaiting: Bool { lock.lock(); defer { lock.unlock() }; return entered }
+    func resume() { release.signal() }
 }
 
 final class PlaybackFeatureTests: XCTestCase {
@@ -136,7 +158,7 @@ final class PlaybackFeatureTests: XCTestCase {
 
     @MainActor func testSleepingDisplayOnlyResumesIfHostStillWantsAnimation() throws {
         let baseline = InstanceTracker.shared.activeCount
-        let view = try XCTUnwrap(MontageView(frame: CGRect(x: 0, y: 0, width: 640, height: 360), isPreview: true))
+        let view = try XCTUnwrap(MontageView(frame: CGRect(x: 0, y: 0, width: 640, height: 360), isPreview: false))
         view.startAnimation(); XCTAssertEqual(InstanceTracker.shared.activeCount, baseline + 1)
         view.screensDidSleep(); XCTAssertEqual(InstanceTracker.shared.activeCount, baseline)
         XCTAssertEqual(view.layer?.sublayers?.count ?? 0, 0)
@@ -284,6 +306,103 @@ final class PlaybackFeatureTests: XCTestCase {
         XCTAssertEqual(view.layer?.sublayers?.first?.sublayers?.count, 1)
         view.stopAnimation()
         XCTAssertEqual(Preferences.settingsSnapshot(), original)
+    }
+
+    @MainActor func testPolicyChangeDuringStartupCacheReadRestoresOfflinePlayback() async throws {
+        let directory = try temporaryDirectory(); defer { try? FileManager.default.removeItem(at: directory) }
+        let cache = DiskCache(namespace: "startup", directory: directory)
+        let items = makeItems(5)
+        for item in items { await cache.store(item.artPaths[.fanart]!, image: bitmap(), item: item, source: .fanart, width: 8, height: 8) }
+        let gate = HistoryReadGate(); defer { gate.resume() }
+        let history = RecentTitleHistory(namespace: "startup", directory: directory.appendingPathComponent("history"), now: { gate.now() })
+        let provider = PlaybackFixtureProvider(items: [], image: bitmap())
+        let pool = ImagePool(provider: provider, namespace: "startup", imageSource: .fanart,
+            cellWidth: 8, cellHeight: 8, poolSize: 2, diskCache: cache, recentHistory: history)
+        let initialRestore = Task { await pool.restoreCachedImages(selection: .all) }
+        let blocked = await waitUntil { gate.isWaiting }; XCTAssertTrue(blocked)
+        await pool.updateRuntimePolicy(.resolve(lowPower: false, thermalState: .serious))
+        initialRestore.cancel(); gate.resume()
+        let first = await initialRestore.value; XCTAssertEqual(first, 0)
+        let count = await pool.restoreCachedCatalogueIfNeeded(selection: .all); XCTAssertEqual(count, 5)
+        let grid = GridManager(frame: CGRect(x: 0, y: 0, width: 160, height: 90), rows: 1, columns: 1, rotationInterval: 5)
+        grid.updateRuntimePolicy(.resolve(lowPower: false, thermalState: .serious)); grid.startRotation(imagePool: pool)
+        let filled = await waitUntil { grid.occupiedCellCount == 1 }; XCTAssertTrue(filled)
+        let requests = await provider.requestCount; let catalogues = await provider.catalogCount
+        XCTAssertEqual(requests, 0); XCTAssertEqual(catalogues, 0)
+        grid.stopRotation(); await pool.stop()
+    }
+
+    @MainActor func testOfflineMixedCatalogueKeepsBothSourcesWhenCellAspectChanges() async throws {
+        let directory = try temporaryDirectory(); defer { try? FileManager.default.removeItem(at: directory) }
+        let cache = DiskCache(namespace: "mixed", directory: directory)
+        let item = MediaItem(id: "a", title: "Both sources", year: nil, artPaths: [.fanart: "/background", .posters: "/poster"])
+        await cache.store("/background", image: bitmap(), item: item, source: .fanart, width: 8, height: 8)
+        await cache.store("/poster", image: bitmap(), item: item, source: .posters, width: 8, height: 8)
+        let provider = PlaybackFixtureProvider(items: [], image: bitmap())
+        let pool = ImagePool(provider: provider, namespace: "mixed", imageSource: .mixed,
+            cellWidth: 4, cellHeight: 8, poolSize: 1, diskCache: cache)
+        await pool.updateRuntimePolicy(.resolve(lowPower: false, thermalState: .serious))
+        _ = await pool.restoreCachedImages(selection: .all)
+        let count = await pool.catalogueItemCount; XCTAssertEqual(count, 1)
+        let first = await pool.takeImage(); XCTAssertEqual(first?.artPath, "/poster")
+        if let first { await pool.release(item: first) }
+        await pool.updateRequestSize(width: 8, height: 4)
+        var showedBackground = false
+        for _ in 0..<20 {
+            _ = await pool.prefill()
+            if let item = await pool.takeImage() {
+                showedBackground = showedBackground || item.artPath == "/background"
+                await pool.release(item: item)
+            }
+            if showedBackground { break }
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+        XCTAssertTrue(showedBackground, "an adaptive portrait-to-landscape cell should choose its cached background")
+        let requests = await provider.requestCount; XCTAssertEqual(requests, 0)
+        await pool.stop()
+    }
+
+    @MainActor func testLocalReadingContinuesInSeriousThermalStateButCriticalPausesIt() async {
+        let provider = PlaybackFixtureProvider(items: makeItems(5), image: bitmap(), requiresNetwork: false)
+        let pool = ImagePool(provider: provider, namespace: UUID().uuidString, imageSource: .fanart,
+            cellWidth: 8, cellHeight: 8, poolSize: 4)
+        await pool.updateRuntimePolicy(.resolve(lowPower: false, thermalState: .serious))
+        let count = await pool.loadMediaItems(selection: .all); XCTAssertEqual(count, 5)
+        let filled = await pool.prefill(); XCTAssertEqual(filled, 1)
+        let requests = await provider.requestCount; XCTAssertEqual(requests, 1)
+        await pool.updateRuntimePolicy(.resolve(lowPower: false, thermalState: .critical))
+        _ = await pool.prefill(); _ = await pool.loadMediaItems(selection: .all)
+        let after = await provider.requestCount; let catalogues = await provider.catalogCount
+        XCTAssertEqual(after, requests); XCTAssertEqual(catalogues, 1)
+        await pool.stop()
+    }
+
+    @MainActor func testMissingLocalFileDoesNotPutOtherArtworkIntoNetworkBackoff() async {
+        let items = makeItems(5)
+        let provider = PlaybackFixtureProvider(items: items, image: bitmap(), requiresNetwork: false,
+            missingPaths: [items[0].artPaths[.fanart]!])
+        let pool = ImagePool(provider: provider, namespace: UUID().uuidString, imageSource: .fanart,
+            cellWidth: 8, cellHeight: 8, poolSize: 4)
+        _ = await pool.loadMediaItems(selection: .all)
+        let filled = await pool.prefill(); XCTAssertEqual(filled, 4)
+        await pool.stop()
+    }
+
+    @MainActor func testCachedPhotoWorksUnderOppositeArtworkPreset() async throws {
+        let directory = try temporaryDirectory(); defer { try? FileManager.default.removeItem(at: directory) }
+        let cache = DiskCache(namespace: "photo", directory: directory)
+        let photo = MediaItem(id: "photo", title: "A photo", year: nil, artPaths: [.fanart: "opaque", .posters: "opaque"], mediaType: "photo")
+        await cache.store("opaque", image: bitmap(), item: photo, source: .fanart, width: 8, height: 8)
+        let provider = PlaybackFixtureProvider(items: [], image: bitmap(), requiresNetwork: false)
+        let pool = ImagePool(provider: provider, namespace: "photo", imageSource: .posters,
+            cellWidth: 8, cellHeight: 8, poolSize: 1, diskCache: cache)
+        _ = await pool.restoreCachedImages(selection: .all)
+        let first = await pool.takeImage(); XCTAssertEqual(first?.artPath, "opaque")
+        if let first { await pool.release(item: first) }
+        let replenished = await waitUntil { _ = await pool.prefill(); return await pool.stats().poolDepth == 1 }
+        XCTAssertTrue(replenished)
+        let requests = await provider.requestCount; XCTAssertEqual(requests, 0)
+        await pool.stop()
     }
 
 }
