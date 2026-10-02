@@ -266,7 +266,8 @@ class MontageView: ScreenSaverView {
                         return
                     }
                     do {
-                        provider = try LocalArtworkProvider(bookmarkData: bookmark)
+                        let opened = try LocalArtworkProvider(bookmarkData: bookmark)
+                        provider = RecoveringLocalArtworkProvider(bookmarkData: bookmark, initialProvider: opened)
                     } catch {
                         let saved = await DiskCacheCoordinator.shared.cache(for: namespace)
                         let available = await saved.availableArtwork(selection: settings.librarySelection,
@@ -274,7 +275,7 @@ class MontageView: ScreenSaverView {
                             requireAdequateSize: false)
                         guard isCurrent(run) else { return }
                         guard !available.isEmpty else { throw error }
-                        provider = CachedOnlyLocalArtworkProvider()
+                        provider = RecoveringLocalArtworkProvider(bookmarkData: bookmark)
                     }
                 }
             }
@@ -362,7 +363,7 @@ class MontageView: ScreenSaverView {
 
     private func scheduleRefresh(after delay: Double, pool: ImagePool, settings: SaverSettings,
                                  run: UUID, retryDelay: Double) {
-        guard runtimePolicy.allowsNetwork, !runtimePolicy.pausesPlayback else { return }
+        guard (runtimePolicy.allowsNetwork || !pool.requiresNetwork), !runtimePolicy.pausesPlayback else { return }
         let delay = runtimePolicy == .normal ? delay : max(delay, runtimePolicy.refreshInterval)
         runTask = Task { [weak self] in
             do { try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) }

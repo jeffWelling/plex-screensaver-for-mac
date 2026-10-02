@@ -28,13 +28,22 @@
   runtime-verification checks still owed (two-monitor U0/U1/U2/U4, Jellyfin
   device N1, Tahoe lingering N5).
 
-## Standing backlogs
+## Current verification backlog
 
-- `docs/IMPROVEMENTS-2026-07-09.md` — 17-item prioritized review. Several items
-  landed via the 2026-07-15 pass: 1 & 2 (freeze/leak → U3), 5 (tests → A1), 15
-  (Phase-1 duplicates → U1), 16 (repo hygiene → R5), 17 (dead API → R1). Still
-  open: 3, 4 (Jellyfin plaintext warning + timeouts), 6 (signing/notarization),
-  7 (Plex pagination), 8–13 (cache/decode/refactor/config polish), 14 step 1
-  (DiskCache singleton).
-- `TODO-thumbnail-resume.md` — DONE and removed. Its v0.4.4 commit landed
-  2026-07-15 (R5); the censor gate passed (`your-server.plex.direct`).
+- Verify full-screen playback and recovery with a locked Keychain.
+- Verify real two-monitor behavior, especially small libraries and offline playback.
+- Run the macOS 15/26 CI matrix and a longer memory and energy soak.
+- Provide a Developer ID identity and notarization profile for public distribution.
+- Exercise Jellyfin filters against a real server; local tests cover provider responses.
+
+The 2026-10-02 hardening and 0.7.0 experience releases supersede the old
+implementation backlog. Current coverage is 184 Swift tests and 9 Python
+tests. Options and artwork playback have been checked in System Settings.
+
+## Historical reviews
+
+- `docs/IMPROVEMENTS-2026-07-09.md` and
+  `docs/IMPROVEMENTS-2026-07-15.md` retain the original findings and decisions.
+  They describe the code at that time; use the current verification backlog
+  above for remaining checks.
+- `TODO-thumbnail-resume.md` was completed and removed in the July pass.

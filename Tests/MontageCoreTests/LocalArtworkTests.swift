@@ -147,8 +147,8 @@ final class LocalArtworkTests: XCTestCase {
         XCTAssertNotEqual(items[0].titleKey, items[1].titleKey)
     }
 
-    func testCachedOnlyFallbackDoesNotAcquireAccessAndReportsStableErrors() async {
-        let provider = CachedOnlyLocalArtworkProvider()
+    func testRecoveringFallbackWithInvalidBookmarkReportsStableErrors() async {
+        let provider = RecoveringLocalArtworkProvider(bookmarkData: Data())
         XCTAssertFalse(provider.requiresNetwork)
         XCTAssertFalse(provider.filterCapabilities.hasFilters)
         do { _ = try await provider.fetchLibraries(); XCTFail("Expected unavailable folder") }

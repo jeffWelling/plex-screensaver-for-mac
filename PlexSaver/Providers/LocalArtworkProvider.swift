@@ -196,26 +196,6 @@ actor LocalArtworkProvider: MediaProvider {
     }
 }
 
-/// Allows the normal disk-cache startup path to run when a saved folder is
-/// temporarily disconnected. It holds no bookmark, file descriptor or token.
-struct CachedOnlyLocalArtworkProvider: MediaProvider {
-    let serverName = "Saved local artwork"
-    let requiresNetwork = false
-
-    func fetchLibraries() async throws -> [MediaLibrary] {
-        try Task.checkCancellation()
-        throw LocalArtworkError.chooseFolderAgain
-    }
-    func fetchItems(libraryId: String) async throws -> [MediaItem] {
-        try Task.checkCancellation()
-        throw LocalArtworkError.chooseFolderAgain
-    }
-    func fetchImage(path: String, width: Int, height: Int) async throws -> NSImage {
-        try Task.checkCancellation()
-        throw LocalArtworkError.chooseFolderAgain
-    }
-}
-
 /// Reopens the previously authorized folder during finite catalogue refreshes.
 /// Initialization grants no access; a disconnected folder leaves only its
 /// bookmark in memory while the caller continues using existing disk artwork.
