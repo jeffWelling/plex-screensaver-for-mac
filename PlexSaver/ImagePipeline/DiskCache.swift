@@ -131,7 +131,7 @@ actor DiskCache {
         transaction {
             let candidates = manifest.entries.filter { entry in
                 guard selection.includes(entry.item.libraryId), filter.matches(entry.item) else { return false }
-                return imageSource == entry.source ||
+                return entry.item.mediaType == "photo" || imageSource == entry.source ||
                     (imageSource == .mixed && (includePostersInMixed || entry.source == .fanart))
             }.sorted {
                 let seenA = recentTitleDates[RecentTitleHistory.digest($0.item.titleKey)]
@@ -163,7 +163,7 @@ actor DiskCache {
                 decodedBytes += cost
                 seenTitles.insert(entry.item.titleKey)
                 results.append(CachedArtwork(artPath: entry.artPath, image: image, item: entry.item,
-                                             source: entry.source, width: entry.width, height: entry.height,
+                                             source: logicalSource(entry, requested: imageSource, width: width, height: height), width: entry.width, height: entry.height,
                                              downloadedAt: entry.downloadedAt))
             }
             return results
@@ -174,7 +174,7 @@ actor DiskCache {
     /// size variants, and keep stale artwork available for offline readiness.
     func availableArtwork(selection: LibrarySelection, imageSource: ImageSourceType,
                           filter: MediaFilter = MediaFilter(), width: Int, height: Int,
-                          requireAdequateSize: Bool = true) -> [CachedArtworkDescriptor] {
+                          requireAdequateSize: Bool = true, uniqueTitles: Bool = true) -> [CachedArtworkDescriptor] {
         transaction {
             var seenTitles = Set<String>()
             var result: [CachedArtworkDescriptor] = []
@@ -189,14 +189,15 @@ actor DiskCache {
             for entry in candidates {
                 guard !Task.isCancelled else { break }
                 guard selection.includes(entry.item.libraryId), filter.matches(entry.item),
-                      imageSource == .mixed || imageSource == entry.source,
-                      !seenTitles.contains(entry.item.titleKey),
+                      imageSource == .mixed || imageSource == entry.source || entry.item.mediaType == "photo",
+                      !uniqueTitles || !seenTitles.contains(entry.item.titleKey),
                       !requireAdequateSize || (entry.width >= width && entry.height >= height),
                       let dimensions = imageDimensions(directory.appendingPathComponent(entry.filename)),
                       !requireAdequateSize || (dimensions.width >= width && dimensions.height >= height) else { continue }
                 seenTitles.insert(entry.item.titleKey)
                 result.append(CachedArtworkDescriptor(artPath: entry.artPath, item: entry.item,
-                    source: entry.source, width: entry.width, height: entry.height, downloadedAt: entry.downloadedAt))
+                    source: logicalSource(entry, requested: imageSource, width: width, height: height),
+                    width: entry.width, height: entry.height, downloadedAt: entry.downloadedAt))
             }
             return result
         } ?? []
@@ -222,7 +223,16 @@ actor DiskCache {
     }
 
     func markPreparationCompleted(_ date: Date? = nil) {
-        _ = transaction { manifest.lastPreparedDate = date ?? now() }
+        guard !Task.isCancelled else { return }
+        _ = transaction {
+            guard !Task.isCancelled else { return }
+            manifest.lastPreparedDate = date ?? now()
+        }
+    }
+
+    private func logicalSource(_ entry: CacheEntry, requested: ImageSourceType, width: Int, height: Int) -> ImageSourceType {
+        guard entry.item.mediaType == "photo" else { return entry.source }
+        return requested == .mixed ? (width >= height ? .fanart : .posters) : requested
     }
 
     private func imageDimensions(_ url: URL) -> (width: Int, height: Int)? {
@@ -242,8 +252,9 @@ actor DiskCache {
     /// TIFF roundtrip and an additional full-size bitmap decode.
     func store(_ key: String, image: NSImage, item: MediaItem, source: ImageSourceType,
                width: Int, height: Int) {
-        guard let jpeg = PreparedArtwork.jpegData(image) else { return }
+        guard !Task.isCancelled, let jpeg = PreparedArtwork.jpegData(image) else { return }
         _ = transaction {
+            guard !Task.isCancelled else { return }
             let variant = "\(key)|\(width)x\(height)"
             let filename = Self.filename(for: variant)
             do {
