@@ -26,6 +26,11 @@ struct MediaItem: Codable, Sendable {
     /// Provider content kind keeps movies, series, albums, and artists with the
     /// same title separate. IDs are not used: duplicate editions share a title.
     var mediaType: String? = nil
+    /// Optional fields keep catalogues saved before metadata filtering readable.
+    var genres: [String]? = nil
+    var collections: [String]? = nil
+    var isFavorite: Bool? = nil
+    var isWatched: Bool? = nil
 
     /// Returns the art path for the given source type, or a random available
     /// path for `.mixed` (Backgrounds and Posters). The optional flag exists
@@ -58,11 +63,21 @@ struct MediaItem: Codable, Sendable {
 enum ProviderType: String, Codable, CaseIterable, Sendable {
     case plex
     case jellyfin
+    case local
+
+    var filterCapabilities: MediaFilterCapabilities {
+        switch self {
+        case .plex: return MediaFilterCapabilities(supportsGenres: true, supportsCollections: true, supportsUnwatched: true)
+        case .jellyfin: return MediaFilterCapabilities(supportsGenres: true, supportsFavorites: true, supportsUnwatched: true)
+        case .local: return MediaFilterCapabilities()
+        }
+    }
 
     var displayName: String {
         switch self {
         case .plex: return "Plex"
         case .jellyfin: return "Jellyfin"
+        case .local: return "Local Folder"
         }
     }
 }
