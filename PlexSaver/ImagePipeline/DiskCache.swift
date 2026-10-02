@@ -140,6 +140,11 @@ actor DiskCache {
                 let adequateA = $0.width >= width && $0.height >= height
                 let adequateB = $1.width >= width && $1.height >= height
                 if adequateA != adequateB { return adequateA }
+                if imageSource == .mixed, $0.source != $1.source {
+                    let preferred: ImageSourceType = width >= height ? .fanart : .posters
+                    if $0.source == preferred { return true }
+                    if $1.source == preferred { return false }
+                }
                 return $0.lastAccess > $1.lastAccess
             }
             var seenTitles = Set<String>()
@@ -173,7 +178,15 @@ actor DiskCache {
         transaction {
             var seenTitles = Set<String>()
             var result: [CachedArtworkDescriptor] = []
-            for entry in manifest.entries.sorted(by: { $0.downloadedAt > $1.downloadedAt }) {
+            let candidates = manifest.entries.sorted {
+                if imageSource == .mixed, $0.source != $1.source {
+                    let preferred: ImageSourceType = width >= height ? .fanart : .posters
+                    if $0.source == preferred { return true }
+                    if $1.source == preferred { return false }
+                }
+                return $0.downloadedAt > $1.downloadedAt
+            }
+            for entry in candidates {
                 guard !Task.isCancelled else { break }
                 guard selection.includes(entry.item.libraryId), filter.matches(entry.item),
                       imageSource == .mixed || imageSource == entry.source,
