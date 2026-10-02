@@ -45,8 +45,13 @@ enum ConfigurationProviderFactory {
     }
 }
 private enum OfflinePreparationError: LocalizedError {
-    case noFolder
-    var errorDescription: String? { "Choose an artwork folder first." }
+    case noFolder, cacheWriteFailed
+    var errorDescription: String? {
+        switch self {
+        case .noFolder: return "Choose an artwork folder first."
+        case .cacheWriteFailed: return "The artwork could not be saved to the offline cache."
+        }
+    }
 }
 
 /// Sequential downloads bound memory and network use. A successful replacement
@@ -137,7 +142,9 @@ struct OfflineArtworkPreparation: OfflineArtworkPreparing {
                     do {
                         let image = try await provider.fetchImage(path: art.path, width: requestWidth, height: requestHeight)
                         try Task.checkCancellation()
-                        await cache.store(art.path, image: image, item: item, source: art.source, width: requestWidth, height: requestHeight)
+                        let stored = await cache.store(art.path, image: image, item: item, source: art.source, width: requestWidth, height: requestHeight)
+                        try Task.checkCancellation()
+                        guard stored else { throw OfflinePreparationError.cacheWriteFailed }
                         downloaded += 1
                     } catch {
                         try Task.checkCancellation()

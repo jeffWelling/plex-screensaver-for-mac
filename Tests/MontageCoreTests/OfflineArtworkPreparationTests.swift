@@ -15,6 +15,7 @@ private actor PreparationProvider: MediaProvider {
     var items: [String: [MediaItem]]
     var fails = false
     var suspends = false
+    var invalidImages = false
     private var continuation: CheckedContinuation<NSImage, Error>?
     private var imageWaiters: [CheckedContinuation<Void, Never>] = []
     private(set) var paths: [String] = []
@@ -22,6 +23,7 @@ private actor PreparationProvider: MediaProvider {
     init(_ items: [String: [MediaItem]]) { self.items = items }
     func setFailure(_ value: Bool) { fails = value }
     func setSuspended(_ value: Bool) { suspends = value }
+    func setInvalidImages(_ value: Bool) { invalidImages = value }
     func waitForImage() async {
         if continuation != nil { return }
         await withCheckedContinuation { imageWaiters.append($0) }
@@ -32,6 +34,7 @@ private actor PreparationProvider: MediaProvider {
     func fetchImage(path: String, width: Int, height: Int) async throws -> NSImage {
         paths.append(path)
         if fails { throw MockError.imageFailed }
+        if invalidImages { return NSImage(size: .zero) }
         if suspends {
             return try await withCheckedThrowingContinuation {
                 continuation = $0
@@ -44,11 +47,11 @@ private actor PreparationProvider: MediaProvider {
 }
 
 final class OfflineArtworkPreparationTests: XCTestCase {
-    private func cache() throws -> DiskCache {
+    private func cache(maxSize: Int = DiskCache.defaultMaxSize) throws -> DiskCache {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("montage-preparation-\(UUID())")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
-        return DiskCache(namespace: "test", directory: directory)
+        return DiskCache(namespace: "test", maxSize: maxSize, directory: directory)
     }
     private var connection: ConnectionSnapshot { ConnectionSnapshot(provider: .jellyfin, serverURL: "https://test.invalid", token: "fixture", userID: "u", accountID: "u") }
     private func settings(selection: LibrarySelection = .all, source: ImageSourceType = .fanart, filter: MediaFilter = MediaFilter()) -> SaverSettings {
@@ -221,6 +224,49 @@ final class OfflineArtworkPreparationTests: XCTestCase {
         XCTAssertEqual(result.downloaded, 1)
         let paths = await provider.paths
         XCTAssertEqual(paths.count, 1)
+    }
+
+    func testQuotaEvictionDoesNotCountAnUnsavedDownloadOrMarkCompleted() async throws {
+        let cache = try cache(maxSize: 0), provider = PreparationProvider(["a": makeItems(1)])
+        let service = OfflineArtworkPreparation(makeProvider: { _ in provider }, makeCache: { _ in cache })
+        let result = try await service.prepare(connection: connection, settings: settings(), width: 16, height: 16, refreshExisting: false) { _ in }
+        let summary = await cache.summary(), paths = await provider.paths
+        XCTAssertEqual(paths.count, 1, "The provider succeeded; the cache deliberately rejected retention")
+        XCTAssertEqual(result.downloaded, 0)
+        XCTAssertEqual(result.failed, 1)
+        XCTAssertEqual(summary.count, 0)
+        XCTAssertNil(summary.lastPreparedDate)
+    }
+    func testFailedReplacementEncodingKeepsExistingOfflineImageAndReportsFailure() async throws {
+        let cache = try cache()
+        var item = makeItems(1)[0]; item.libraryId = "a"
+        let stored = await cache.store("/art/0", image: preparationImage(), item: item, source: .fanart, width: 16, height: 16)
+        XCTAssertTrue(stored)
+        let preparedAt = Date(timeIntervalSince1970: 1_600_000_000)
+        await cache.markPreparationCompleted(preparedAt)
+        let before = await cache.summary()
+        let provider = PreparationProvider(["a": [item]])
+        await provider.setInvalidImages(true)
+        let service = OfflineArtworkPreparation(makeProvider: { _ in provider }, makeCache: { _ in cache })
+        let result = try await service.prepare(connection: connection, settings: settings(), width: 16, height: 16, refreshExisting: true) { _ in }
+        let after = await cache.summary(), oldImage = await cache.get("/art/0", width: 16, height: 16)
+        XCTAssertEqual(result.downloaded, 0)
+        XCTAssertEqual(result.failed, 1)
+        XCTAssertEqual(after.lastRefresh, before.lastRefresh)
+        XCTAssertEqual(after.lastPreparedDate, before.lastPreparedDate)
+        XCTAssertNotNil(oldImage, "A readable previous image must not mask the failed replacement")
+    }
+    func testUnwritableCacheLocationReportsFailureWithoutCompletionMarker() async throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("montage-cache-file-\(UUID())")
+        try Data("not a directory".utf8).write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+        let cache = DiskCache(namespace: "test", directory: file), provider = PreparationProvider(["a": makeItems(1)])
+        let service = OfflineArtworkPreparation(makeProvider: { _ in provider }, makeCache: { _ in cache })
+        let result = try await service.prepare(connection: connection, settings: settings(), width: 16, height: 16, refreshExisting: false) { _ in }
+        XCTAssertEqual(result.downloaded, 0)
+        XCTAssertEqual(result.failed, 1)
+        let summary = await cache.summary()
+        XCTAssertNil(summary.lastPreparedDate)
     }
 
 }

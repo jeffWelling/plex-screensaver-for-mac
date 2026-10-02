@@ -253,18 +253,19 @@ actor DiskCache {
 
     /// JPEG encoding uses the already prepared CGImage directly, avoiding a
     /// TIFF roundtrip and an additional full-size bitmap decode.
+    @discardableResult
     func store(_ key: String, image: NSImage, item: MediaItem, source: ImageSourceType,
-               width: Int, height: Int) {
-        guard !Task.isCancelled, let jpeg = PreparedArtwork.jpegData(image) else { return }
-        _ = transaction {
-            guard !Task.isCancelled else { return }
+               width: Int, height: Int) -> Bool {
+        guard !Task.isCancelled, let jpeg = PreparedArtwork.jpegData(image) else { return false }
+        return transaction {
+            guard !Task.isCancelled else { return false }
             let variant = "\(key)|\(width)x\(height)"
             let filename = Self.filename(for: variant)
             do {
                 try jpeg.write(to: directory.appendingPathComponent(filename), options: .atomic)
             } catch {
                 OSLog.info("Artwork cache write failed")
-                return
+                return false
             }
             manifest.entries.removeAll { $0.filename == filename }
             manifest.entries.append(CacheEntry(artPath: key, filename: filename,
@@ -273,7 +274,12 @@ actor DiskCache {
                                                downloadedAt: now(), lastAccess: now()))
             manifest.lastRefresh = now()
             evictIfNeeded()
-        }
+            // A successful download is prepared only if its exact variant
+            // survived the quota and has a readable image header. An older
+            // fallback image must not hide a failed replacement.
+            return manifest.entries.contains { $0.filename == filename }
+                && imageDimensions(directory.appendingPathComponent(filename)) != nil
+        } ?? false
     }
 
     func clear() {
