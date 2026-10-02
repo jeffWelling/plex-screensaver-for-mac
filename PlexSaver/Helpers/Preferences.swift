@@ -58,6 +58,22 @@ struct Preferences {
         get { simple("RotationInterval", default: 5.0) }
         set { defaults.set(newValue, forKey: "RotationInterval") }
     }
+    static var artworkFraming: ArtworkFraming {
+        get { codable("ArtworkFraming", default: .fill) }
+        set { setCodable(newValue, forKey: "ArtworkFraming") }
+    }
+    static var transitionDuration: Double {
+        get { simple("TransitionDuration", default: 1.0) }
+        set { defaults.set(newValue, forKey: "TransitionDuration") }
+    }
+    static var localFolderBookmark: Data? {
+        get { defaults.data(forKey: "LocalFolderBookmark") }
+        set { defaults.set(newValue, forKey: "LocalFolderBookmark") }
+    }
+    static var localFolderIdentity: String {
+        get { simple("LocalFolderIdentity", default: "") }
+        set { defaults.set(newValue, forKey: "LocalFolderIdentity") }
+    }
     static var imageSource: ImageSourceType {
         get { codable("ImageSource", default: .fanart) }
         set { setCodable(newValue, forKey: "ImageSource") }
@@ -122,17 +138,20 @@ struct Preferences {
         switch providerType {
         case .plex: return ConnectionProfile(provider: .plex, serverURL: plexServerURL, accountID: plexAccountID, serverID: plexServerID)
         case .jellyfin: return ConnectionProfile(provider: .jellyfin, serverURL: jellyfinServerURL, accountID: jellyfinUserId)
+        case .local: return ConnectionProfile(provider: .local, serverURL: "", accountID: localFolderIdentity)
         }
     }
     static func connectionSnapshot(credentialReader: @Sendable (String) async throws -> String = { key in
         try await Preferences.readCredential(key, migrateLegacy: true)
     }) async throws -> ConnectionSnapshot {
         let profile = connectionProfile
-        let token = try await credentialReader(profile.provider == .plex ? "PlexToken" : "JellyfinAccessToken")
+        let bookmark = profile.provider == .local ? localFolderBookmark : nil
+        let token = profile.provider == .local ? "" : try await credentialReader(profile.provider == .plex ? "PlexToken" : "JellyfinAccessToken")
         try Task.checkCancellation()
-        guard connectionProfile == profile, connectionProfile.serverURL == profile.serverURL else { throw CancellationError() }
+        guard connectionProfile == profile, connectionProfile.serverURL == profile.serverURL,
+              profile.provider != .local || localFolderBookmark == bookmark else { throw CancellationError() }
         return ConnectionSnapshot(provider: profile.provider, serverURL: profile.serverURL, token: token,
-                                  userID: profile.provider == .jellyfin ? profile.accountID : "", accountID: profile.accountID, serverID: profile.serverID, fallbackURLs: profile.provider == .plex ? plexFallbackURLs : [])
+                                  userID: profile.provider == .jellyfin ? profile.accountID : "", accountID: profile.accountID, serverID: profile.serverID, fallbackURLs: profile.provider == .plex ? plexFallbackURLs : [], localFolderBookmark: bookmark)
     }
     /// Compatibility fingerprint used only to verify migration of pre-stable-ID profiles.
     static func legacyPlexAccountIdentifier(for token: String) -> String {
@@ -159,18 +178,29 @@ struct Preferences {
         if profile == connectionProfile { defaults.set(true, forKey: "LibrarySelectionMigrated") }
         defaults.synchronize()
     }
+    static func mediaFilter(for profile: ConnectionProfile) -> MediaFilter {
+        guard let data = defaults.data(forKey: "MediaFilter.\(profile.namespace)"),
+              let filter = try? JSONDecoder().decode(MediaFilter.self, from: data) else { return MediaFilter() }
+        return filter
+    }
+    static func saveMediaFilter(_ filter: MediaFilter, for profile: ConnectionProfile) {
+        if let data = try? JSONEncoder().encode(filter) { defaults.set(data, forKey: "MediaFilter.\(profile.namespace)") }
+    }
     static func settingsSnapshot() -> SaverSettings {
         // Migration is evaluated without writing anything while Options loads.
         let source = !defaults.bool(forKey: "ArtworkChoicesMigrated") && imageSource == .mixed && !includePostersInMixed ? ImageSourceType.fanart : imageSource
         return SaverSettings(rows: gridRows, columns: gridColumns, autoColumns: gridAutoColumns,
                              rotationInterval: rotationInterval, imageSource: source,
                              showTitleReveal: showTitleReveal, titleDisplayDuration: titleDisplayDuration,
-                             librarySelection: librarySelection(for: connectionProfile))
+                             librarySelection: librarySelection(for: connectionProfile), artworkFraming: artworkFraming,
+                             transitionDuration: transitionDuration, mediaFilter: mediaFilter(for: connectionProfile))
     }
     static func saveSettings(_ settings: SaverSettings, profile: ConnectionProfile) {
         gridRows = settings.rows; gridColumns = settings.columns; gridAutoColumns = settings.autoColumns
         rotationInterval = settings.rotationInterval; imageSource = settings.imageSource
         includePostersInMixed = true; showTitleReveal = settings.showTitleReveal; titleDisplayDuration = settings.titleDisplayDuration
+        artworkFraming = settings.artworkFraming; transitionDuration = settings.transitionDuration
+        saveMediaFilter(settings.mediaFilter, for: profile)
         saveLibrarySelection(settings.librarySelection, for: profile)
         defaults.set(true, forKey: "ArtworkChoicesMigrated")
         defaults.synchronize()

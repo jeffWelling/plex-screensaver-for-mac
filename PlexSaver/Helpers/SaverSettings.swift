@@ -39,6 +39,18 @@ struct ConnectionProfile: Codable, Equatable, Hashable, Sendable {
     }
 }
 
+enum ArtworkFraming: String, Codable, CaseIterable, Sendable {
+    case fill, fit
+    var displayName: String { self == .fill ? "Fill frame" : "Show full artwork" }
+}
+
+enum PresentationPreset: String, CaseIterable, Sendable {
+    case mosaic, posterWall, calm
+    var displayName: String {
+        switch self { case .mosaic: return "Mosaic"; case .posterWall: return "Poster Wall"; case .calm: return "Calm" }
+    }
+}
+
 /// Validated once at startup, then passed through the entire run unchanged.
 struct SaverSettings: Equatable, Sendable {
     let rows: Int
@@ -49,18 +61,43 @@ struct SaverSettings: Equatable, Sendable {
     let showTitleReveal: Bool
     let titleDisplayDuration: Double
     let librarySelection: LibrarySelection
+    let artworkFraming: ArtworkFraming
+    let transitionDuration: Double
+    let mediaFilter: MediaFilter
 
     init(rows: Int, columns: Int, autoColumns: Bool, rotationInterval: Double,
          imageSource: ImageSourceType, showTitleReveal: Bool, titleDisplayDuration: Double,
-         librarySelection: LibrarySelection) {
+         librarySelection: LibrarySelection, artworkFraming: ArtworkFraming = .fill,
+         transitionDuration: Double = 1, mediaFilter: MediaFilter = MediaFilter()) {
         self.rows = min(10, max(1, rows))
         self.columns = min(10, max(1, columns))
         self.autoColumns = autoColumns
-        self.rotationInterval = rotationInterval.isFinite ? min(30, max(2, rotationInterval)) : 5
+        self.rotationInterval = rotationInterval.isFinite ? min(120, max(2, rotationInterval)) : 5
         self.imageSource = imageSource
         self.showTitleReveal = showTitleReveal
-        self.titleDisplayDuration = min(self.rotationInterval - 1, max(0.5, titleDisplayDuration.isFinite ? titleDisplayDuration : 2))
+        self.transitionDuration = transitionDuration.isFinite ? min(3, max(0.2, transitionDuration)) : 1
+        self.titleDisplayDuration = min(max(0.5, self.rotationInterval - self.transitionDuration), max(0.5, titleDisplayDuration.isFinite ? titleDisplayDuration : 2))
         self.librarySelection = librarySelection
+        self.artworkFraming = artworkFraming
+        self.mediaFilter = mediaFilter
+    }
+
+    /// Presets change presentation only, keeping the user's content choices.
+    func applying(_ preset: PresentationPreset) -> SaverSettings {
+        switch preset {
+        case .mosaic:
+            return SaverSettings(rows: 3, columns: 4, autoColumns: false, rotationInterval: 5,
+                imageSource: .fanart, showTitleReveal: true, titleDisplayDuration: 2,
+                librarySelection: librarySelection, artworkFraming: .fill, transitionDuration: 1, mediaFilter: mediaFilter)
+        case .posterWall:
+            return SaverSettings(rows: 2, columns: 6, autoColumns: true, rotationInterval: 10,
+                imageSource: .posters, showTitleReveal: true, titleDisplayDuration: 2,
+                librarySelection: librarySelection, artworkFraming: .fit, transitionDuration: 1, mediaFilter: mediaFilter)
+        case .calm:
+            return SaverSettings(rows: 1, columns: 1, autoColumns: false, rotationInterval: 60,
+                imageSource: .fanart, showTitleReveal: false, titleDisplayDuration: 2,
+                librarySelection: librarySelection, artworkFraming: .fit, transitionDuration: 2, mediaFilter: mediaFilter)
+        }
     }
 }
 
@@ -72,8 +109,9 @@ struct ConnectionSnapshot: Sendable {
     let accountID: String
     let serverID: String
     let fallbackURLs: [String]
-    init(provider: ProviderType, serverURL: String, token: String, userID: String, accountID: String, serverID: String = "", fallbackURLs: [String] = []) {
-        self.provider = provider; self.serverURL = serverURL; self.token = token; self.userID = userID; self.accountID = accountID; self.serverID = serverID; self.fallbackURLs = fallbackURLs
+    let localFolderBookmark: Data?
+    init(provider: ProviderType, serverURL: String, token: String, userID: String, accountID: String, serverID: String = "", fallbackURLs: [String] = [], localFolderBookmark: Data? = nil) {
+        self.provider = provider; self.serverURL = serverURL; self.token = token; self.userID = userID; self.accountID = accountID; self.serverID = serverID; self.fallbackURLs = fallbackURLs; self.localFolderBookmark = localFolderBookmark
     }
     var profile: ConnectionProfile { ConnectionProfile(provider: provider, serverURL: serverURL, accountID: accountID, serverID: serverID) }
 }
