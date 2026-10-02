@@ -172,6 +172,8 @@ actor DiskCache {
 
     /// Read image headers without retaining decoded bitmaps. Count titles, not
     /// size variants, and keep stale artwork available for offline readiness.
+    /// Requested dimensions identify prepared variants; the original source or
+    /// decoder's pixel limit can legitimately have fewer actual pixels.
     func availableArtwork(selection: LibrarySelection, imageSource: ImageSourceType,
                           filter: MediaFilter = MediaFilter(), width: Int, height: Int,
                           requireAdequateSize: Bool = true, uniqueTitles: Bool = true) -> [CachedArtworkDescriptor] {
@@ -192,8 +194,7 @@ actor DiskCache {
                       imageSource == .mixed || imageSource == entry.source || entry.item.mediaType == "photo",
                       !uniqueTitles || !seenTitles.contains(entry.item.titleKey),
                       !requireAdequateSize || (entry.width >= width && entry.height >= height),
-                      let dimensions = imageDimensions(directory.appendingPathComponent(entry.filename)),
-                      !requireAdequateSize || (dimensions.width >= width && dimensions.height >= height) else { continue }
+                      imageDimensions(directory.appendingPathComponent(entry.filename)) != nil else { continue }
                 seenTitles.insert(entry.item.titleKey)
                 result.append(CachedArtworkDescriptor(artPath: entry.artPath, item: entry.item,
                     source: logicalSource(entry, requested: imageSource, width: width, height: height),
@@ -206,7 +207,9 @@ actor DiskCache {
     /// Update metadata after a successful catalog fetch without deleting the
     /// artwork that still makes an unavailable server usable offline.
     func refreshMetadata(_ items: [MediaItem], libraryIDs: [String]) {
+        guard !Task.isCancelled else { return }
         _ = transaction {
+            guard !Task.isCancelled else { return }
             let libraries = Set(libraryIDs)
             var catalog: [String: MediaItem] = [:]
             for item in items {

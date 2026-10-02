@@ -43,6 +43,11 @@ final class ExperienceSettingsTests: XCTestCase {
             librarySelection: .all, transitionDuration: 999)
         XCTAssertEqual(finite.transitionDuration, 3)
         XCTAssertEqual(finite.titleDisplayDuration, 27)
+        let fast = SaverSettings(rows: 1, columns: 1, autoColumns: false, rotationInterval: 2,
+            imageSource: .fanart, showTitleReveal: true, titleDisplayDuration: 3,
+            librarySelection: .all, transitionDuration: 3)
+        XCTAssertEqual(fast.transitionDuration, 1.5)
+        XCTAssertEqual(fast.titleDisplayDuration, 0.5)
     }
 
     func testFilterPreferencesAreScopedToConnection() {

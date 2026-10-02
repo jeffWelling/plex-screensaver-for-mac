@@ -81,6 +81,40 @@ final class OfflineReadinessCacheTests: XCTestCase {
         XCTAssertEqual(queue.map { $0.item.id }, ["b", "c"])
     }
 
+    func testPreparedLowResolutionOriginalRemainsOfflineReady() async throws {
+        let (cache, _) = try cache()
+        await cache.store("/a", image: image(4, 4), item: item("a"), source: .fanart, width: 16, height: 16)
+        let prepared = await cache.availableArtwork(selection: .all, imageSource: .fanart, width: 16, height: 16)
+        XCTAssertEqual(prepared.count, 1, "An original image cannot acquire detail through repeated downloads")
+    }
+
+    func testLocalPhotoPreparedUnderPostersWorksWithBackgrounds() async throws {
+        let (cache, _) = try cache()
+        let photo = MediaItem(id: "photo", title: "Photo", year: nil,
+            artPaths: [.fanart: "photo-key", .posters: "photo-key"], libraryId: "local", mediaType: "photo")
+        await cache.store("photo-key", image: image(), item: photo, source: .posters, width: 16, height: 16)
+        let ready = await cache.availableArtwork(selection: .all, imageSource: .fanart, width: 8, height: 8)
+        let queue = await cache.cachedImages(limit: 2, selection: .all, imageSource: .fanart, width: 8, height: 8)
+        XCTAssertEqual(ready.count, 1)
+        XCTAssertEqual(ready.first?.source, .fanart)
+        XCTAssertEqual(queue.count, 1)
+    }
+
+    func testCanceledStoreAndCompletionDoNotWrite() async throws {
+        let (cache, _) = try cache()
+        let artwork = image()
+        let metadata = item("a")
+        let task = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            await cache.store("/a", image: artwork, item: metadata, source: .fanart, width: 16, height: 16)
+            await cache.markPreparationCompleted()
+        }
+        await task.value
+        let summary = await cache.summary()
+        XCTAssertEqual(summary.count, 0)
+        XCTAssertNil(summary.lastPreparedDate)
+    }
+
     func testPreparationTimestampPersistsAcrossCacheInstances() async throws {
         let (cache, directory) = try cache()
         let date = Date(timeIntervalSince1970: 1_700_000_000)

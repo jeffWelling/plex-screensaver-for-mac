@@ -65,7 +65,7 @@ import SwiftUI
                             Text("\(Int(viewModel.rotationInterval)) s").monospacedDigit().frame(width: 45)
                         }
                         LabeledContent("Fade duration") {
-                            Slider(value: $viewModel.transitionDuration, in: 0.2...3, step: 0.1) { Text("Fade duration") }
+                            Slider(value: $viewModel.transitionDuration, in: 0.2...min(3, viewModel.rotationInterval - 0.5), step: 0.1) { Text("Fade duration") }
                                 .labelsHidden().accessibilityLabel("Fade duration")
                             Text("\(viewModel.transitionDuration, specifier: "%.1f") s").monospacedDigit().frame(width: 45)
                         }
@@ -121,7 +121,7 @@ import SwiftUI
                 }
 
                 Section {
-                    Text("\(viewModel.offlineReadiness.readyTitles) titles ready for offline playback at this display size.")
+                    Text("\(viewModel.offlineReadiness.readyTitles) titles prepared for offline playback.")
                         .font(.caption).foregroundStyle(.secondary)
                     if let date = viewModel.offlineReadiness.lastPreparedDate {
                         HStack(spacing: 4) { Text("Last preparation:"); Text(date, style: .relative); Text("ago") }.font(.caption).foregroundStyle(.secondary)
@@ -161,6 +161,9 @@ import SwiftUI
             viewModel.updateArtworkPreview(); viewModel.refreshDiagnostics()
         }
         .onChange(of: viewModel.currentSelection) { _, _ in viewModel.refreshFilterOptions() }
+        .onChange(of: viewModel.transitionDuration) { _, duration in
+            viewModel.titleDisplayDuration = min(viewModel.titleDisplayDuration, max(0.5, viewModel.rotationInterval - duration))
+        }
         .onChange(of: viewModel.rotationInterval) { _, interval in
             viewModel.titleDisplayDuration = min(viewModel.titleDisplayDuration, max(0.5, interval - viewModel.transitionDuration))
             viewModel.transitionDuration = min(viewModel.transitionDuration, interval - 0.5)

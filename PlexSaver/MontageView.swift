@@ -260,7 +260,17 @@ class MontageView: ScreenSaverView {
                         showStatus("Choose an artwork folder in Options.")
                         return
                     }
-                    provider = try LocalArtworkProvider(bookmarkData: bookmark)
+                    do {
+                        provider = try LocalArtworkProvider(bookmarkData: bookmark)
+                    } catch {
+                        let saved = await DiskCacheCoordinator.shared.cache(for: namespace)
+                        let available = await saved.availableArtwork(selection: settings.librarySelection,
+                            imageSource: settings.imageSource, filter: MediaFilter(), width: 1, height: 1,
+                            requireAdequateSize: false)
+                        guard isCurrent(run) else { return }
+                        guard !available.isEmpty else { throw error }
+                        provider = CachedOnlyLocalArtworkProvider()
+                    }
                 }
             }
             guard isCurrent(run), !runtimePolicy.pausesPlayback else { return }

@@ -1,6 +1,6 @@
 # Montage
 
-Montage is a macOS screensaver that displays a rotating mosaic of artwork from Plex or Jellyfin. It supports macOS 15 and later, on Apple silicon and Intel.
+Montage is a macOS screensaver that displays a rotating mosaic of artwork from Plex, Jellyfin, or a local artwork folder. It supports macOS 15 and later, on Apple silicon and Intel.
 
 ![Montage running with title reveal](docs/screenshots/montage-grid.png)
 
@@ -8,11 +8,13 @@ Montage is a macOS screensaver that displays a rotating mosaic of artwork from P
 
 - Browser sign-in and server discovery for Plex; username/password sign-in for Jellyfin.
 - Backgrounds, posters, or both, with selectable libraries for each account and server.
-- Adjustable grid, display-aware column fitting, progressive artwork loading, and optional title reveal.
-- Connection-scoped artwork caches with image-size variants and offline playback.
+- Mosaic, Poster Wall, and Calm presets; adjustable grids, display-aware columns, framing choices, and title reveal.
+- Connection-scoped artwork caches, offline readiness, and cancellable artwork preparation.
 - Prompt first images, bounded background downloads, and automatic recovery from temporary outages.
-- Multiple-display coordination to keep the same title from appearing twice.
-- Options with a layout preview, labelled controls, cache management, and private diagnostic summaries.
+- Multiple-display coordination and bounded recent-title history to improve variety across sessions.
+- Genre, collection, favorite, and watched-status filters according to each server's capabilities.
+- Read-only local folder access, automatic power and thermal adaptation, and suspension while displays sleep.
+- Options with a live artwork preview, Cancel, advanced display controls, and private diagnostic summaries.
 
 ## Installation
 
@@ -39,12 +41,20 @@ make install
 |---------|---------|----------|
 | Rows | 3 | One to ten rows |
 | Columns | 4 | One to ten columns, or fitted to each display |
-| Delay between changes | 5 seconds | Two to thirty seconds |
+| Delay between changes | 5 seconds | Two to 120 seconds |
+| Framing | Fill frame | Crop to fill cells, or show full artwork against black |
+| Transition | 1 second | 0.2 to 3 seconds, adjusted for accessibility and power |
 | Artwork | Backgrounds | Backgrounds, Posters, or Both |
 | Title reveal | On | Reveal the outgoing title before changing artwork |
 | Libraries | All | Explicit selection is stored per connection; selecting none shows the setup message |
 
-Changes are saved together through **Apply and Close**. Saved connections refresh their available libraries when Options opens. Use **Test / Refresh** after changing server availability or library contents.
+Choose **Mosaic**, **Poster Wall**, or **Calm** for a presentation preset. Presets retain the connection, selected libraries, and content filters. Expand Advanced for individual layout, timing, and title controls. Both artwork chooses backgrounds for wide cells and posters for tall cells, falling back to another available image when needed.
+
+**Live Preview** opens the actual screensaver in a regular window using the draft connection and display choices. It does not save preferences or credentials, or contribute to the installed screensaver's recent-title history. Close the preview before applying or canceling.
+
+Changes are saved together through **Apply and Close**. **Cancel**, Escape, and closing the Options window discard unsaved display and connection changes. Sign-out and disconnect are staged until Apply. Cache-management actions are separate operations; Cancel does not undo artwork already downloaded or deliberately cleared.
+
+Saved connections refresh their available libraries when Options opens. Use **Test / Refresh** after changing server availability or library contents. Filters are saved separately for each connection: Plex supports genres, collections, and unwatched titles; Jellyfin supports genres, favorites, and unwatched titles. Values within one category are alternatives; separate enabled categories must all match. Unwatched Plex series include partly watched series. Unknown watch or favorite status does not qualify for an enabled filter.
 
 ### Jellyfin
 
@@ -56,13 +66,23 @@ The password is used only for authentication and is not saved. Access tokens are
 
 Sign in through the browser and select a server. Discovery checks advertised secure connections for reachability. Montage can retry another advertised HTTPS connection for the same physical server after a network failure; it does not silently downgrade an HTTPS connection to HTTP.
 
+### Local artwork folder
+
+Choose **Local folder** as the artwork source, then select a folder using the macOS folder picker. Supported images in subfolders are included; hidden files, packages, and symbolic links are skipped. Filename captions omit the extension. Folder access is stored as a read-only security-scoped bookmark, and artwork never requires a media-server account. If the folder moves or permission becomes unavailable, choose it again in Options.
+
+Local files follow the same bounded decoder and cache budgets as server artwork. Separate files retain their identity even when they have the same name. A single image file is limited to 16 MiB; folders with more than 50,000 visited entries require choosing a smaller folder.
+
 ## Cache and offline playback
 
 Artwork is stored under `~/Library/Caches/com.montage.Montage/artwork-v2/`, separated by provider, server, and account. JPEG records retain titles, years, library identity, artwork revisions, requested pixel dimensions, and download dates.
 
 Available cached artwork appears during startup and can continue rotating offline. A seven-day freshness interval controls artwork revalidation; accessing a cached image does not make it fresh, and stale artwork remains usable offline. The disk cache has a 512 MiB limit per connection. Decoded image caching has a shared 96 MiB process budget, pending artwork has a 32 MiB budget per display, and prepared images are limited to eight megapixels. Visible images are a separate working set. Downloads also have explicit byte limits and deadlines.
 
-**Clear cache** removes the current connection's artwork. **Refresh artwork** clears it and checks the connection. Signing out removes the relevant saved connection and cached content. Old account-unscoped cache data is retained but not used by this version, so the first start after upgrading can download artwork once again.
+**Refresh artwork** checks the current catalog and updates saved metadata while preserving working artwork. A failed request does not erase the offline collection. **Clear cache** deliberately removes the current connection's artwork. Applying a staged sign-out removes the relevant saved connection and cached content.
+
+Offline readiness counts valid cached titles prepared for the draft libraries, artwork choice, filters, and requested layout. Original image resolution and the decoder's eight-megapixel limit can reduce detail on very large displays; smaller cached variants remain usable as an offline fallback. Multiple image-size variants count as one title. **Prepare offline artwork** downloads up to 200 eligible titles per pass, prioritizing missing artwork, and can be canceled. Repeat to prepare more; the 512 MiB cache limit still applies, so large collections may not fit in full. The completion status and readiness count report what is actually retained. Downloading is suspended on display sleep or severe thermal pressure.
+
+Recent-title history is scoped to each connection, stores hashed title identities, and is bounded. It influences selection rather than forbidding repeats, so small libraries can keep rotating. Power adaptation reduces prefetch and rotation under Low Power Mode or thermal pressure; severe pressure uses cached artwork, and critical pressure pauses rotation. Old account-unscoped cache data is retained but not used by this version, so the first start after upgrading can download artwork once again.
 
 ## Development
 
@@ -112,7 +132,7 @@ Automated builds and SaverTest complement these checks; they do not establish co
 
 ## Troubleshooting
 
-**No server configured:** Open Options and sign in with Plex or Jellyfin.
+**No artwork source configured:** Open Options and sign in with Plex or Jellyfin, or choose a local folder.
 
 **No libraries selected:** Enable All libraries or select at least one discovered library, then apply.
 
@@ -120,7 +140,7 @@ Automated builds and SaverTest complement these checks; they do not establish co
 
 **Credential storage failed:** Read the Keychain error shown in Options and use Unlock saved credentials after unlocking macOS. A failed sign-out is reported so it is not mistaken for a completed logout. The screensaver uses noninteractive credential reads; sharing access between Options and Apple’s playback host still requires validation in those actual hosts.
 
-**Unexpected artwork or cache size:** Use the current connection's Clear Cache or Refresh Artwork controls. Copy Diagnostics provides versions and aggregate status without credentials, addresses, or media titles.
+**Unexpected artwork or cache size:** Check the selected libraries and filters, use Refresh artwork to update the catalog, or deliberately Clear cache. Copy Diagnostics provides versions and aggregate status without credentials, addresses, or media titles.
 
 **Montage does not appear in System Settings:** Confirm `Montage.saver` exists in `~/Library/Screen Savers/` and reopen System Settings. On current macOS, choose Wallpaper → Screen Saver… → Custom → Other → Show All, then scroll to Montage. Automatic hides the custom gallery. Avoid installing multiple copies of the same screensaver.
 

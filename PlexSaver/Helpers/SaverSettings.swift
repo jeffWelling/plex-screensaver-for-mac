@@ -75,7 +75,7 @@ struct SaverSettings: Equatable, Sendable {
         self.rotationInterval = rotationInterval.isFinite ? min(120, max(2, rotationInterval)) : 5
         self.imageSource = imageSource
         self.showTitleReveal = showTitleReveal
-        self.transitionDuration = transitionDuration.isFinite ? min(3, max(0.2, transitionDuration)) : 1
+        self.transitionDuration = min(self.rotationInterval - 0.5, transitionDuration.isFinite ? min(3, max(0.2, transitionDuration)) : 1)
         self.titleDisplayDuration = min(max(0.5, self.rotationInterval - self.transitionDuration), max(0.5, titleDisplayDuration.isFinite ? titleDisplayDuration : 2))
         self.librarySelection = librarySelection
         self.artworkFraming = artworkFraming

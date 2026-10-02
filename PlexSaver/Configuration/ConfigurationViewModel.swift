@@ -204,8 +204,8 @@ private struct StagedJellyfinConnection {
     var currentSelection: LibrarySelection { allLibraries ? .all : .selected(selectedLibraryIds) }
     var currentConnection: ConnectionSnapshot {
         ConnectionSnapshot(provider: providerType, serverURL: currentProfile.serverURL,
-                           token: providerType == .plex ? plexToken : jellyfinToken,
-                           userID: jellyfinUserID, accountID: currentProfile.accountID, serverID: currentProfile.serverID, fallbackURLs: providerType == .plex ? plexFallbackURLs : [], localFolderBookmark: localFolderBookmark)
+                           token: providerType == .local ? "" : (providerType == .plex ? plexToken : jellyfinToken),
+                           userID: providerType == .jellyfin ? jellyfinUserID : "", accountID: currentProfile.accountID, serverID: currentProfile.serverID, fallbackURLs: providerType == .plex ? plexFallbackURLs : [], localFolderBookmark: providerType == .local ? localFolderBookmark : nil)
     }
     private func loadSelection(for profile: ConnectionProfile) {
         mediaFilter = (profileFilters[profile] ?? Preferences.mediaFilter(for: profile)).supported(by: profile.provider.filterCapabilities)
