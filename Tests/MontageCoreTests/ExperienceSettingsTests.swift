@@ -1,4 +1,5 @@
 import XCTest
+import AppKit
 @testable import MontageCore
 
 final class ExperienceSettingsTests: XCTestCase {
@@ -55,6 +56,18 @@ final class ExperienceSettingsTests: XCTestCase {
         Preferences.saveMediaFilter(filter, for: first)
         XCTAssertEqual(Preferences.mediaFilter(for: first), filter)
         XCTAssertTrue(Preferences.mediaFilter(for: second).isEmpty)
+    }
+
+    @MainActor
+    func testPreviewDoesNotChangeActiveDisplayAllocation() throws {
+        let count = InstanceTracker.shared.activeCount
+        let preview = try XCTUnwrap(MontageView(frame: NSRect(x: 0, y: 0, width: 640, height: 360), isPreview: true))
+        preview.configurePreview(settings: settings(), connection: ConnectionSnapshot(provider: .local,
+            serverURL: "", token: "", userID: "", accountID: "isolated-preview"))
+        preview.startAnimation()
+        XCTAssertEqual(InstanceTracker.shared.activeCount, count)
+        preview.stopAnimation()
+        XCTAssertEqual(InstanceTracker.shared.activeCount, count)
     }
 
     func testLocalSnapshotDoesNotReadServerCredentials() async throws {

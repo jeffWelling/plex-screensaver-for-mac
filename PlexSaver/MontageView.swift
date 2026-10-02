@@ -101,7 +101,7 @@ class MontageView: ScreenSaverView {
     private func beginRun() {
         guard hostWantsAnimation, !displaysAsleep, !started else { return }
         started = true
-        InstanceTracker.shared.setActive(true, instance: instanceNumber)
+        if !isPreview { InstanceTracker.shared.setActive(true, instance: instanceNumber) }
         let run = UUID()
         generation = run
         let snapshot = previewConfiguration?.settings ?? Preferences.settingsSnapshot()
@@ -221,6 +221,7 @@ class MontageView: ScreenSaverView {
     private func isCurrent(_ run: UUID) -> Bool { started && generation == run && !Task.isCancelled }
 
     private func run(settings: SaverSettings, generation run: UUID) async {
+        guard isCurrent(run), !runtimePolicy.pausesPlayback else { return }
         do {
             let provider: any MediaProvider
             let namespace: String
@@ -277,7 +278,7 @@ class MontageView: ScreenSaverView {
                                  cellWidth: pixelWidth, cellHeight: pixelHeight,
                                  poolSize: min(24, max(2, gridManager?.cells.count ?? 12)),
                                  diskCache: cache,
-                                 reservationNamespace: isPreview ? namespace + ".preview" : namespace,
+                                 reservationNamespace: isPreview ? namespace + ".preview.\(instanceNumber)" : namespace,
                                  recentHistory: isPreview || isolatedSample ? nil : RecentTitleHistory(namespace: namespace),
                                  mediaFilter: settings.mediaFilter.supported(by: provider.filterCapabilities))
             await pool.updateRuntimePolicy(runtimePolicy)
@@ -413,7 +414,7 @@ class MontageView: ScreenSaverView {
         guard availableItems > 0 else { return (settings.rows, columns) }
         return GridManager.adaptiveDimensions(rows: settings.rows, columns: columns,
                                               availableItems: availableItems,
-                                              displayCount: max(1, InstanceTracker.shared.activeCount))
+                                              displayCount: isPreview ? 1 : max(1, InstanceTracker.shared.activeCount))
     }
 
     override func draw(_ rect: NSRect) {

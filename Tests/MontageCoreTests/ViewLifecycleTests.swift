@@ -6,7 +6,7 @@ final class ViewLifecycleTests: XCTestCase {
     @MainActor
     func testRepeatedStartsAndStopsDoNotAccumulateGridOrStatusLayers() throws {
         let baseline = InstanceTracker.shared.activeCount
-        let view = try XCTUnwrap(MontageView(frame: NSRect(x: 0, y: 0, width: 640, height: 360), isPreview: true))
+        let view = try XCTUnwrap(MontageView(frame: NSRect(x: 0, y: 0, width: 640, height: 360), isPreview: false))
         for _ in 0..<12 {
             view.startAnimation()
             let count = view.layer?.sublayers?.count ?? 0
