@@ -53,6 +53,9 @@ struct MediaItem: Codable, Sendable {
     /// this key so the registry treats them as one item and never displays both
     /// at once. Case-folded so trivial casing differences don't defeat it.
     var titleKey: String {
+        // Photos with the same camera-generated file name in different folders
+        // remain distinct artwork, unlike duplicate editions of a movie.
+        if mediaType == "photo" { return "photo|\(id)" }
         let identity = "\(title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())|\(year.map(String.init) ?? "")"
         guard let mediaType, !mediaType.isEmpty else { return identity }
         return "\(mediaType.lowercased())|\(identity)"

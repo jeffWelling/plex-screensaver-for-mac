@@ -142,16 +142,18 @@ actor LocalArtworkProvider: MediaProvider {
             visited += 1
             guard visited <= Self.maximumFiles else { throw LocalArtworkError.tooManyFiles }
             guard let values = try? url.resourceValues(forKeys: Set(keys)) else { continue }
-            if values.isSymbolicLink == true {
-                enumerator.skipDescendants()
-                continue
-            }
+            // URL enumeration does not descend into symlinks. Calling
+            // skipDescendants on a symlink file would skip the next real folder.
+            if values.isSymbolicLink == true { continue }
             guard values.isRegularFile == true,
                   let size = values.fileSize, size > 0, size <= URLSessionTransport.maximumImageBytes,
                   let type = values.contentType,
                   type.conforms(to: .image), supported.contains(type.identifier) else { continue }
-            let relative = String(url.path.dropFirst(rootURL.path.count + 1))
-            guard !relative.isEmpty, url.path.hasPrefix(rootURL.path + "/") else { continue }
+            // Foundation may enumerate /private/var while its canonical URL
+            // uses /var. Normalize both sides before deriving a relative path.
+            let candidate = url.standardizedFileURL.resolvingSymlinksInPath()
+            let relative = String(candidate.path.dropFirst(rootURL.path.count + 1))
+            guard !relative.isEmpty, candidate.path.hasPrefix(rootURL.path + "/") else { continue }
             let identity = LocalArtworkFolder.hash(relative)
             let revision = LocalArtworkFolder.hash("\(relative)|\(size)|\(values.contentModificationDate?.timeIntervalSince1970 ?? 0)")
             files[revision] = relative

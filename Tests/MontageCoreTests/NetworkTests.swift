@@ -142,6 +142,8 @@ final class NetworkTests: XCTestCase {
         XCTAssertEqual(request.url?.path, "/Jellyfin/Users/user+one/Items")
         let query = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!.queryItems!
         XCTAssertEqual(query.first?.value, "lib+1&other")
+        XCTAssertEqual(query.first { $0.name == "Fields" }?.value, "PrimaryImageAspectRatio,Genres")
+        XCTAssertEqual(query.first { $0.name == "EnableUserData" }?.value, "true")
         XCTAssertTrue(request.value(forHTTPHeaderField: "Authorization")!.contains("Token=\"abc\""))
         XCTAssertFalse(request.value(forHTTPHeaderField: "Authorization")!.contains("Version=\"1.0\""))
     }
