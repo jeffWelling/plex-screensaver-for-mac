@@ -1,5 +1,12 @@
 import AppKit
 
+/// The remote screensaver host may remove window chrome from auxiliary views.
+/// Keep preview keyboard focus and an Escape close action in that form.
+@MainActor final class ArtworkPreviewWindow: NSWindow {
+    override var canBecomeKey: Bool { true }
+    override func cancelOperation(_ sender: Any?) { close() }
+}
+
 /// A separate preview uses draft settings and in-memory credentials, never
 /// saves preferences, and stops the renderer before its window disappears.
 @MainActor final class ArtworkPreviewController: NSObject, NSWindowDelegate {
@@ -17,7 +24,7 @@ import AppKit
             let rectangle = NSRect(x: 0, y: 0, width: 960, height: 540)
             guard let view = makeView(rectangle) else { return }
             view.autoresizingMask = [.width, .height]
-            let preview = NSWindow(contentRect: rectangle, styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+            let preview = ArtworkPreviewWindow(contentRect: rectangle, styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
             preview.title = "Montage Preview — Unsaved Changes"
             preview.isReleasedWhenClosed = false; preview.contentView = view
             preview.minSize = NSSize(width: 480, height: 300); preview.delegate = self; preview.center()

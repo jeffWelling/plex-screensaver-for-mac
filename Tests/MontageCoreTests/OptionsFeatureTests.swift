@@ -138,4 +138,26 @@ private actor OptionsPreparation: OfflineArtworkPreparing {
         XCTAssertEqual(before, NSDictionary(dictionary: Preferences.defaults.dictionaryRepresentation()))
     }
 
+    func testRemoteHostBorderlessPreviewKeepsFocusAndEscapeStopsRenderer() throws {
+        _ = NSApplication.shared
+        let controller = ArtworkPreviewController()
+        let settings = SaverSettings(rows: 1, columns: 1, autoColumns: false, rotationInterval: 60,
+            imageSource: .fanart, showTitleReveal: false, titleDisplayDuration: 2, librarySelection: .selected([]))
+        let connection = ConnectionSnapshot(provider: .plex, serverURL: "", token: "", userID: "", accountID: "borderless-preview")
+        controller.show(settings: settings, connection: connection)
+        let window = try XCTUnwrap(controller.window as? ArtworkPreviewWindow)
+        let view = try XCTUnwrap(window.contentView as? MontageView)
+        window.styleMask = .borderless
+        XCTAssertTrue(window.canBecomeKey, "Apple's remote host removes title chrome; the live preview must retain keyboard focus")
+        XCTAssertTrue(view.isAnimating)
+        window.cancelOperation(nil)
+        XCTAssertFalse(view.isAnimating)
+        XCTAssertNil(controller.window)
+        controller.show(settings: settings, connection: connection)
+        let reopened = try XCTUnwrap(controller.window)
+        XCTAssertFalse(window === reopened)
+        XCTAssertTrue(reopened.canBecomeKey)
+        controller.close()
+    }
+
 }
