@@ -56,6 +56,7 @@ final class LocalArtworkTests: XCTestCase {
         try FileManager.default.createSymbolicLink(at: root.appendingPathComponent("outside"), withDestinationURL: outside)
         try FileManager.default.createSymbolicLink(at: root.appendingPathComponent("linked.png"), withDestinationURL: outside.appendingPathComponent("secret.png"))
         let provider = try LocalArtworkProvider(bookmarkData: LocalArtworkFolder.bookmark(for: root))
+        XCTAssertFalse(provider.requiresNetwork)
         let libraries = try await provider.fetchLibraries()
         XCTAssertEqual(libraries.map(\.id), [LocalArtworkProvider.libraryID])
         let items = try await provider.fetchItems(libraryId: LocalArtworkProvider.libraryID)
@@ -144,6 +145,23 @@ final class LocalArtworkTests: XCTestCase {
         XCTAssertEqual(items.count, 2)
         guard items.count == 2 else { return }
         XCTAssertNotEqual(items[0].titleKey, items[1].titleKey)
+    }
+
+    func testCachedOnlyFallbackDoesNotAcquireAccessAndReportsStableErrors() async {
+        let provider = CachedOnlyLocalArtworkProvider()
+        XCTAssertFalse(provider.requiresNetwork)
+        XCTAssertFalse(provider.filterCapabilities.hasFilters)
+        do { _ = try await provider.fetchLibraries(); XCTFail("Expected unavailable folder") }
+        catch { XCTAssertEqual(error as? LocalArtworkError, .chooseFolderAgain) }
+        do { _ = try await provider.fetchItems(libraryId: LocalArtworkProvider.libraryID); XCTFail("Expected unavailable folder") }
+        catch { XCTAssertEqual(error as? LocalArtworkError, .chooseFolderAgain) }
+        do { _ = try await provider.fetchImage(path: "cached", width: 12, height: 8); XCTFail("Expected unavailable folder") }
+        catch { XCTAssertEqual(error as? LocalArtworkError, .chooseFolderAgain) }
+    }
+
+    func testNetworkProvidersRequireNetworkByDefault() {
+        XCTAssertTrue(PlexProvider(serverURL: "https://fixture.invalid", token: "token").requiresNetwork)
+        XCTAssertTrue(JellyfinProvider(serverURL: "https://fixture.invalid", accessToken: "token", userId: "user").requiresNetwork)
     }
 
     func testMissingFolderReportsActionableSelectionError() throws {

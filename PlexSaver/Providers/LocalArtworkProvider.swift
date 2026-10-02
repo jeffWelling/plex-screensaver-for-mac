@@ -67,6 +67,7 @@ enum LocalArtworkError: Error, LocalizedError, Equatable {
 /// skipped. The selected folder's descriptor anchors every subsequent read.
 actor LocalArtworkProvider: MediaProvider {
     nonisolated let serverName: String
+    nonisolated let requiresNetwork = false
     nonisolated let filterCapabilities = MediaFilterCapabilities()
     private let scopedURL: URL
     private let rootURL: URL
@@ -192,5 +193,25 @@ actor LocalArtworkProvider: MediaProvider {
             throw LocalArtworkError.missingArtwork
         }
         return descriptor
+    }
+}
+
+/// Allows the normal disk-cache startup path to run when a saved folder is
+/// temporarily disconnected. It holds no bookmark, file descriptor or token.
+struct CachedOnlyLocalArtworkProvider: MediaProvider {
+    let serverName = "Saved local artwork"
+    let requiresNetwork = false
+
+    func fetchLibraries() async throws -> [MediaLibrary] {
+        try Task.checkCancellation()
+        throw LocalArtworkError.chooseFolderAgain
+    }
+    func fetchItems(libraryId: String) async throws -> [MediaItem] {
+        try Task.checkCancellation()
+        throw LocalArtworkError.chooseFolderAgain
+    }
+    func fetchImage(path: String, width: Int, height: Int) async throws -> NSImage {
+        try Task.checkCancellation()
+        throw LocalArtworkError.chooseFolderAgain
     }
 }

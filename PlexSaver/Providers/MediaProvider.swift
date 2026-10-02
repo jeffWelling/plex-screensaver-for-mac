@@ -10,6 +10,10 @@ protocol MediaProvider: Sendable {
     /// Human-readable server name for display
     var serverName: String { get }
 
+    /// Thermal policies may suspend server requests while allowing a small
+    /// amount of local file work. Critical pressure still pauses all playback.
+    var requiresNetwork: Bool { get }
+
     var filterCapabilities: MediaFilterCapabilities { get }
 
     /// Discover choices only in the selected libraries.
@@ -26,6 +30,8 @@ protocol MediaProvider: Sendable {
 }
 
 extension MediaProvider {
+    var requiresNetwork: Bool { true }
+
     var filterCapabilities: MediaFilterCapabilities { MediaFilterCapabilities() }
 
     func fetchFilterOptions(libraryIds: [String]) async throws -> MediaFilterOptions {
