@@ -84,9 +84,14 @@ actor DiskCache {
 
     /// Check if the cache matches the current config. Returns true if valid.
     /// If config changed, the cache is cleared.
-    func validateConfig(serverURL: String, imageSource: ImageSourceType) -> Bool {
+    func validateConfig(serverURL: String, imageSource: ImageSourceType, includePostersInMixed: Bool = false) -> Bool {
         let normalizedURL = Self.normalizeServerURL(serverURL)
-        let source = imageSource.rawValue
+        let source: String
+        if imageSource == .mixed {
+            source = includePostersInMixed ? "mixed:withPosters" : "mixed:fanartOnly"
+        } else {
+            source = imageSource.rawValue
+        }
 
         if manifest.serverURL == normalizedURL && manifest.imageSource == source {
             return true

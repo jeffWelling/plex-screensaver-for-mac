@@ -255,12 +255,19 @@ struct ConfigurationView: View {
     }
 
     private var imageSourceView: some View {
-        Picker("Source:", selection: $viewModel.imageSource) {
-            ForEach(ImageSourceType.allCases, id: \.self) { source in
-                Text(source.displayName).tag(source)
+        VStack(alignment: .leading, spacing: 6) {
+            Picker("Source:", selection: $viewModel.imageSource) {
+                ForEach(ImageSourceType.allCases, id: \.self) { source in
+                    Text(source.displayName).tag(source)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            if viewModel.imageSource == .mixed {
+                Toggle("Include posters in Mixed", isOn: $viewModel.includePostersInMixed)
+                    .font(.caption)
             }
         }
-        .pickerStyle(.segmented)
     }
 
     private var librariesView: some View {

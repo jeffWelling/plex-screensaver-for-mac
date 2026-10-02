@@ -24,11 +24,15 @@ struct MediaItem {
     /// don't know it (the provider converters).
     var libraryId: String? = nil
 
-    /// Returns the art path for the given source type, or a random available path for .mixed
-    func artPath(for source: ImageSourceType) -> String? {
+    /// Returns the art path for the given source type, or a random available
+    /// path for `.mixed`. Posters are opt-in for mixed mode.
+    func artPath(for source: ImageSourceType, includePostersInMixed: Bool = false) -> String? {
         switch source {
         case .mixed:
-            return artPaths.values.randomElement()
+            if includePostersInMixed {
+                return artPaths.values.randomElement()
+            }
+            return artPaths[.fanart]
         default:
             return artPaths[source]
         }

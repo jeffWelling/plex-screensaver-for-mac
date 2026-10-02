@@ -55,6 +55,9 @@ struct Preferences {
     @Storage(key: "ImageSource", defaultValue: .fanart)
     static var imageSource: ImageSourceType
 
+    @SimpleStorage(key: "IncludePostersInMixed", defaultValue: false)
+    static var includePostersInMixed: Bool
+
     @Storage(key: "SelectedLibraryIds", defaultValue: [])
     static var selectedLibraryIds: [String]
 

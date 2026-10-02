@@ -14,6 +14,7 @@ class ConfigurationViewModel: ObservableObject {
     @Published var gridAutoColumns: Bool = false
     @Published var rotationInterval: Double = 5.0
     @Published var imageSource: ImageSourceType = .fanart
+    @Published var includePostersInMixed: Bool = false
     @Published var selectedLibraryIds: Set<String> = []
     @Published var showTitleReveal: Bool = true
     @Published var titleDisplayDuration: Double = 2.0
@@ -188,6 +189,7 @@ class ConfigurationViewModel: ObservableObject {
         gridAutoColumns = Preferences.gridAutoColumns
         rotationInterval = Preferences.rotationInterval
         imageSource = Preferences.imageSource
+        includePostersInMixed = Preferences.includePostersInMixed
         selectedLibraryIds = Set(Preferences.selectedLibraryIds)
         showTitleReveal = Preferences.showTitleReveal
         titleDisplayDuration = Preferences.titleDisplayDuration
@@ -238,6 +240,10 @@ class ConfigurationViewModel: ObservableObject {
 
         $imageSource
             .sink { Preferences.imageSource = $0 }
+            .store(in: &cancellables)
+
+        $includePostersInMixed
+            .sink { Preferences.includePostersInMixed = $0 }
             .store(in: &cancellables)
 
         $selectedLibraryIds

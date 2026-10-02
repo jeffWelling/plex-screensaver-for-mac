@@ -83,9 +83,38 @@ final class PureLogicTests: XCTestCase {
     func testMixedArtPathComesFromAvailablePaths() {
         let item = MediaItem(id: "1", title: "T", year: 2000, artPaths: [.fanart: "/f", .posters: "/p"])
         for _ in 0..<20 {
-            let p = item.artPath(for: .mixed)
+            let p = item.artPath(for: .mixed, includePostersInMixed: true)
             XCTAssertTrue(p == "/f" || p == "/p")
         }
+    }
+
+    func testMixedArtPathExcludesPostersByDefault() {
+        let item = MediaItem(id: "1", title: "T", year: 2000, artPaths: [.fanart: "/f", .posters: "/p"])
+        XCTAssertEqual(item.artPath(for: .mixed), "/f")
+
+        let posterOnly = MediaItem(id: "2", title: "Poster only", year: nil, artPaths: [.posters: "/p2"])
+        XCTAssertNil(posterOnly.artPath(for: .mixed))
+    }
+
+    func testMixedPoolHonorsPosterPreference() async {
+        let items = [
+            MediaItem(id: "1", title: "Fanart item", year: 2000, artPaths: [.fanart: "/f", .posters: "/p"]),
+            MediaItem(id: "2", title: "Poster only", year: 2001, artPaths: [.posters: "/p2"])
+        ]
+        let provider = MockProvider(itemsByLibrary: ["lib": items])
+
+        let defaultPool = ImagePool(provider: provider, imageSource: .mixed,
+                                    cellWidth: 4, cellHeight: 4, poolSize: 2,
+                                    registry: ReservationRegistry())
+        let defaultCount = await defaultPool.loadMediaItems(libraryIds: ["lib"])
+        XCTAssertEqual(defaultCount, 1)
+
+        let inclusivePool = ImagePool(provider: provider, imageSource: .mixed,
+                                      includePostersInMixed: true,
+                                      cellWidth: 4, cellHeight: 4, poolSize: 2,
+                                      registry: ReservationRegistry())
+        let inclusiveCount = await inclusivePool.loadMediaItems(libraryIds: ["lib"])
+        XCTAssertEqual(inclusiveCount, 2)
     }
 
     // MARK: - Provider → MediaItem mapping

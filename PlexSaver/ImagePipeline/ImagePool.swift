@@ -84,6 +84,7 @@ actor ImageRequestCoalescer {
 actor ImagePool {
     private let provider: any MediaProvider
     private let imageSource: ImageSourceType
+    private let includePostersInMixed: Bool
     private let cellWidth: Int
     private let cellHeight: Int
     private let cache: ImageCache
@@ -116,9 +117,10 @@ actor ImagePool {
     /// normally orchestrated by `GridManager`.
     private var reservedTitleKeyByArtPath: [String: String] = [:]
 
-    init(provider: any MediaProvider, imageSource: ImageSourceType, cellWidth: Int, cellHeight: Int, poolSize: Int, diskCache: DiskCache? = nil, registry: ReservationRegistry = .shared) {
+    init(provider: any MediaProvider, imageSource: ImageSourceType, includePostersInMixed: Bool = false, cellWidth: Int, cellHeight: Int, poolSize: Int, diskCache: DiskCache? = nil, registry: ReservationRegistry = .shared) {
         self.provider = provider
         self.imageSource = imageSource
+        self.includePostersInMixed = includePostersInMixed
         self.cellWidth = cellWidth
         self.cellHeight = cellHeight
         self.poolSize = poolSize
@@ -162,7 +164,7 @@ actor ImagePool {
         // keep only the first occurrence of each (title, year).
         var seenTitleKeys = Set<String>()
         mediaItems = allItems.filter { item in
-            guard item.artPath(for: imageSource) != nil else { return false }
+            guard item.artPath(for: imageSource, includePostersInMixed: includePostersInMixed) != nil else { return false }
             return seenTitleKeys.insert(item.titleKey).inserted
         }
         OSLog.info("ImagePool: Loaded \(mediaItems.count) media items with art")
@@ -275,7 +277,7 @@ actor ImagePool {
             currentIndex += 1
             attempts += 1
 
-            guard let artPath = item.artPath(for: imageSource) else { continue }
+            guard let artPath = item.artPath(for: imageSource, includePostersInMixed: includePostersInMixed) else { continue }
             return (item, artPath)
         }
 

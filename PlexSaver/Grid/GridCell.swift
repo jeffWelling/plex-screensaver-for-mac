@@ -37,6 +37,8 @@ class GridCell {
         containerLayer.backgroundColor = CGColor.black
 
         layer1.frame = containerLayer.bounds
+        // Cover the cell without distorting the artwork. Excess width or height
+        // is cropped by the container instead of leaving letterbox bars.
         layer1.contentsGravity = .resizeAspectFill
         layer1.opacity = 0
 

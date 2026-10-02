@@ -483,7 +483,11 @@ class MontageView: ScreenSaverView {
         Task {
             // Phase 1: Try to show cached images instantly
             await cache.load()
-            let _ = await cache.validateConfig(serverURL: serverURL, imageSource: Preferences.imageSource)
+            let _ = await cache.validateConfig(
+                serverURL: serverURL,
+                imageSource: Preferences.imageSource,
+                includePostersInMixed: Preferences.includePostersInMixed
+            )
             let cachedCount = await cache.count
 
             let cacheFresh = await cache.isFresh
@@ -526,6 +530,7 @@ class MontageView: ScreenSaverView {
         let pool = ImagePool(
             provider: provider,
             imageSource: Preferences.imageSource,
+            includePostersInMixed: Preferences.includePostersInMixed,
             cellWidth: cellW,
             cellHeight: cellH,
             poolSize: poolSize,

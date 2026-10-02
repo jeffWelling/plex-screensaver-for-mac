@@ -11,7 +11,7 @@ A macOS screensaver that connects to your Plex or Jellyfin media server and disp
 - **Server auto-discovery** — finds your Plex servers after sign-in
 - **Configurable grid** — adjustable rows, columns, and rotation interval
 - **Crossfade transitions** — smooth per-cell staggered image swaps
-- **Multiple image sources** — fanart, posters, or mixed
+- **Multiple image sources** — fanart, posters, or mixed (posters optional and off by default)
 - **Library selection** — choose which libraries to display from either provider
 - **Persistent image cache** — instant startup from disk cache, no waiting
 - **Offline mode** — shows cached images when server is unreachable
@@ -77,6 +77,7 @@ log stream --predicate 'subsystem CONTAINS "montage" OR subsystem CONTAINS "Mont
 | Grid Columns | 4 | Number of columns in the image grid |
 | Rotation Interval | 5s | Seconds between image transitions per cell |
 | Image Source | Fanart | Fanart (16:9 backgrounds), Posters (2:3), or Mixed |
+| Mixed Posters | Off | Whether Mixed mode may show poster artwork |
 | Provider | Plex | Plex or Jellyfin media server |
 | Libraries | All | Which libraries to pull images from |
 
