@@ -16,7 +16,9 @@ final class GridManager {
     private var showTitleReveal: Bool
     private var titleDisplayDuration: TimeInterval
     private var backingScale: CGFloat
-    private let crossfadeDuration: TimeInterval = 1
+    private let crossfadeDuration: TimeInterval
+    private let artworkFraming: ArtworkFraming
+    private var runtimePolicy: PlaybackRuntimePolicy = .normal
     private var currentItems: [Int: ImageWithMetadata] = [:]
     private var outgoingItems: [Int: ImageWithMetadata] = [:]
     private var stagedItems: [Int: ImageWithMetadata] = [:]
@@ -29,10 +31,12 @@ final class GridManager {
 
     init(frame: CGRect, rows: Int, columns: Int, rotationInterval: TimeInterval,
          showTitleReveal: Bool = true, titleDisplayDuration: TimeInterval = 2,
-         backingScale: CGFloat = 2) {
+         backingScale: CGFloat = 2, artworkFraming: ArtworkFraming = .fill, transitionDuration: TimeInterval = 1) {
         self.rows = min(10, max(1, rows))
         self.columns = min(20, max(1, columns))
-        self.rotationInterval = rotationInterval.isFinite ? min(30, max(2, rotationInterval)) : 5
+        self.rotationInterval = rotationInterval.isFinite ? min(120, max(2, rotationInterval)) : 5
+        self.artworkFraming = artworkFraming
+        self.crossfadeDuration = transitionDuration.isFinite ? min(3, max(0.2, transitionDuration)) : 1
         self.backingScale = max(1, backingScale)
         let resolved = Self.resolveReveal(rotationInterval: self.rotationInterval,
                                           crossfadeDuration: crossfadeDuration,
@@ -95,7 +99,7 @@ final class GridManager {
             for column in 0..<columns {
                 let cell = GridCell(frame: CGRect(x: CGFloat(column) * cellWidth, y: CGFloat(row) * cellHeight,
                                                   width: cellWidth, height: cellHeight),
-                                    row: row, column: column, backingScale: backingScale)
+                                    row: row, column: column, backingScale: backingScale, artworkFraming: artworkFraming)
                 cells.append(cell)
                 rootLayer.addSublayer(cell.containerLayer)
             }
@@ -107,12 +111,14 @@ final class GridManager {
             stopRotation()
             self.imagePool = imagePool
         }
+        guard !runtimePolicy.pausesPlayback else { return }
         fillEmptyCells()
         guard rotationTimer == nil else { return }
-        let timer = Timer(timeInterval: rotationInterval, repeats: true) { [weak self] _ in
+        let interval = max(rotationInterval, runtimePolicy.minimumRotationInterval)
+        let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.rotateWeightedRandomCell() }
         }
-        timer.tolerance = rotationInterval * 0.1
+        timer.tolerance = interval * 0.15
         RunLoop.main.add(timer, forMode: .common)
         rotationTimer = timer
     }
@@ -121,7 +127,7 @@ final class GridManager {
     /// A cold start may contain only one image; launching a take for every cell
     /// would otherwise leave the rest empty until individual rotation ticks.
     func fillEmptyCells() {
-        guard initialFillTask == nil, let pool = imagePool,
+        guard !runtimePolicy.pausesPlayback, initialFillTask == nil, let pool = imagePool,
               cells.indices.contains(where: { currentItems[$0] == nil }) else { return }
         let run = generation
         initialFillTask = Task { [weak self] in
@@ -185,7 +191,7 @@ final class GridManager {
     }
 
     func rotateWeightedRandomCell() {
-        guard imagePool != nil, initialFillTask == nil else { return }
+        guard !runtimePolicy.pausesPlayback, imagePool != nil, initialFillTask == nil else { return }
         let available = cells.indices.filter { !transitioning.contains($0) }
         guard !available.isEmpty else { return }
         if available.contains(where: { currentItems[$0] == nil }) {
@@ -263,6 +269,7 @@ final class GridManager {
             if let outgoing { Task { await pool.release(item: outgoing) } }
         }
         if didDisplay {
+            await pool.didDisplay(incoming)
             if !reportedFirstArtwork {
                 reportedFirstArtwork = true
                 onFirstArtwork?()
@@ -275,6 +282,33 @@ final class GridManager {
         }
         return didDisplay
     }
+
+    func updateRuntimePolicy(_ policy: PlaybackRuntimePolicy) {
+        guard runtimePolicy != policy else { return }
+        runtimePolicy = policy
+        rotationTimer?.invalidate()
+        rotationTimer = nil
+        for cell in cells { cell.updateRuntimePolicy(policy) }
+        if policy.pausesPlayback {
+            generation = UUID()
+            initialFillTask?.cancel()
+            initialFillTask = nil
+            for task in rotationTasks.values { task.cancel() }
+            rotationTasks.removeAll()
+            for cell in cells { cell.finishTransition() }
+            let noLongerVisible = Array(outgoingItems.values) + Array(stagedItems.values)
+            outgoingItems.removeAll()
+            stagedItems.removeAll()
+            transitioning.removeAll()
+            if let pool = imagePool { Task { for item in noLongerVisible { await pool.release(item: item) } } }
+        } else if let pool = imagePool {
+            startRotation(imagePool: pool)
+        }
+    }
+
+    #if DEBUG
+    var scheduledRotationInterval: TimeInterval? { rotationTimer?.timeInterval }
+    #endif
 
     func updateFrame(_ frame: CGRect) {
         CATransaction.begin()

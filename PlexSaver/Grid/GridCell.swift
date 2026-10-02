@@ -13,16 +13,17 @@ final class GridCell {
     private var hasImage = false
     private var generation = 0
     private var currentTitle: String?
+    private var maximumAnimationDuration: TimeInterval?
     let row: Int
     let column: Int
 
-    init(frame: CGRect, row: Int, column: Int, backingScale: CGFloat = 2) {
+    init(frame: CGRect, row: Int, column: Int, backingScale: CGFloat = 2, artworkFraming: ArtworkFraming = .fill) {
         self.row = row
         self.column = column
         containerLayer.masksToBounds = true
         containerLayer.backgroundColor = CGColor.black
         for imageLayer in [firstLayer, secondLayer] {
-            imageLayer.contentsGravity = .resizeAspectFill
+            imageLayer.contentsGravity = artworkFraming == .fit ? .resizeAspect : .resizeAspectFill
             imageLayer.opacity = 0
             containerLayer.addSublayer(imageLayer)
         }
@@ -103,6 +104,24 @@ final class GridCell {
         return true
     }
 
+    /// Settle on the model-layer image when optional animation is suspended.
+    func finishTransition() {
+        generation += 1
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for layer in [firstLayer, secondLayer, titleLayer, titleBackdrop] { layer.removeAllAnimations() }
+        let inactive = firstIsActive ? secondLayer : firstLayer
+        inactive.contents = nil
+        inactive.opacity = 0
+        titleLayer.opacity = 0
+        titleBackdrop.opacity = 0
+        CATransaction.commit()
+    }
+
+    func updateRuntimePolicy(_ policy: PlaybackRuntimePolicy) {
+        maximumAnimationDuration = policy.maximumTransitionDuration
+    }
+
     func clear() {
         generation += 1
         CATransaction.begin()
@@ -147,7 +166,8 @@ final class GridCell {
     }
 
     private func effectiveDuration(_ proposed: CFTimeInterval) -> CFTimeInterval {
-        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? min(proposed, 0.2) : proposed
+        let accessible = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? min(proposed, 0.2) : proposed
+        return maximumAnimationDuration.map { min(accessible, $0) } ?? accessible
     }
 
     private func layoutTitle() {

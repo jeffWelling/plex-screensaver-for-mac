@@ -146,6 +146,11 @@ actor ImageRequestCoalescer {
 actor ImagePool {
     private let provider: any MediaProvider
     private let namespace: String
+    private let reservationNamespace: String
+    private let recentHistory: RecentTitleHistory?
+    private var recentTitleDates: [String: Date] = [:]
+    private let mediaFilter: MediaFilter
+    private var runtimePolicy: PlaybackRuntimePolicy = .normal
     private let imageSource: ImageSourceType
     private let includePostersInMixed: Bool
     private var cellWidth: Int
@@ -183,9 +188,14 @@ actor ImagePool {
     init(provider: any MediaProvider, namespace: String = "default", imageSource: ImageSourceType,
          includePostersInMixed: Bool = true, cellWidth: Int, cellHeight: Int,
          poolSize: Int, diskCache: DiskCache? = nil, registry: ReservationRegistry = .shared,
-         retryInterval: TimeInterval = 30, now: @escaping @Sendable () -> Date = { Date() }) {
+         retryInterval: TimeInterval = 30, now: @escaping @Sendable () -> Date = { Date() },
+         reservationNamespace: String? = nil, recentHistory: RecentTitleHistory? = nil,
+         mediaFilter: MediaFilter = MediaFilter()) {
         self.provider = provider
         self.namespace = namespace
+        self.reservationNamespace = reservationNamespace ?? namespace
+        self.recentHistory = recentHistory
+        self.mediaFilter = mediaFilter
         self.imageSource = imageSource
         self.includePostersInMixed = includePostersInMixed
         self.cellWidth = min(8192, max(1, cellWidth))
@@ -233,7 +243,7 @@ actor ImagePool {
     }
 
     private func activeRequest(_ generation: Int) -> Bool {
-        !isStopped && !Task.isCancelled && requestGeneration == generation
+        !isStopped && !runtimePolicy.pausesPlayback && !Task.isCancelled && requestGeneration == generation
     }
 
     @discardableResult
@@ -252,17 +262,33 @@ actor ImagePool {
     func restoreCachedImages(selection: LibrarySelection) async -> Int {
         guard !isStopped, !Task.isCancelled, let diskCache else { return 0 }
         let request = requestGeneration
+        if let recentHistory { recentTitleDates = await recentHistory.dates() }
+        guard activeRequest(request) else { return 0 }
+        let descriptors = await diskCache.availableArtwork(selection: selection,
+            imageSource: imageSource == .mixed && !includePostersInMixed ? .fanart : imageSource,
+            filter: mediaFilter, width: cellWidth, height: cellHeight, requireAdequateSize: false)
+        guard activeRequest(request) else { return 0 }
         let cached = await diskCache.cachedImages(limit: poolSize, selection: selection,
                                                  imageSource: imageSource, includePostersInMixed: includePostersInMixed,
                                                  width: cellWidth, height: cellHeight,
-                                                 decodedByteLimit: max(0, Self.queueByteLimit - queuedBytes))
+                                                 decodedByteLimit: max(0, Self.queueByteLimit - queuedBytes),
+                                                 filter: mediaFilter, recentTitleDates: recentTitleDates)
         guard activeRequest(request) else { return 0 }
         var seen = Set(pool.map(\.titleKey))
-        for record in cached where seen.insert(record.item.titleKey).inserted {
+        for record in cached where mediaFilter.matches(record.item) && seen.insert(record.item.titleKey).inserted {
             guard pool.count < poolSize else { break }
             guard enqueue(candidate(record.item, artPath: record.artPath, image: record.image)) else { break }
         }
-        mediaItems = cached.map(\.item)
+        // Keep the entire offline catalogue as metadata, while retaining only
+        // a bounded decoded queue. Refreshed item metadata may contain newer
+        // artwork paths; each descriptor names the bytes actually on disk.
+        mediaItems = descriptors.map { record in
+            MediaItem(id: record.item.id, title: record.item.title, year: record.item.year,
+                      artPaths: [record.source: record.artPath], libraryId: record.item.libraryId,
+                      mediaType: record.item.mediaType, genres: record.item.genres,
+                      collections: record.item.collections, isFavorite: record.item.isFavorite,
+                      isWatched: record.item.isWatched)
+        }
         reshuffleIndices()
         lastRefillResult = "cached: \(pool.count)"
         return pool.count
@@ -270,9 +296,12 @@ actor ImagePool {
 
     @discardableResult
     func loadMediaItems(selection: LibrarySelection) async -> Int {
-        guard !isStopped, !Task.isCancelled else { return 0 }
+        guard !isStopped, !runtimePolicy.pausesPlayback, !Task.isCancelled else { return 0 }
+        guard runtimePolicy.allowsNetwork else { return mediaItems.count }
         catalogueGeneration += 1
         let generation = catalogueGeneration
+        if let recentHistory { recentTitleDates = await recentHistory.dates() }
+        guard active(generation) else { return 0 }
         lastLoadError = nil
         librariesTask?.cancel()
         itemsTask?.cancel()
@@ -285,7 +314,7 @@ actor ImagePool {
             catch {
                 guard active(generation) else { return 0 }
                 recordLoadError(error)
-                return 0
+                return mediaItems.count
             }
         case .selected(let ids): libraryIDs = ids.sorted()
         }
@@ -302,6 +331,8 @@ actor ImagePool {
                 var items = try await task.value
                 guard active(generation) else { return 0 }
                 for index in items.indices { items[index].libraryId = id }
+                if let diskCache { await diskCache.refreshMetadata(items, libraryIDs: [id]) }
+                guard active(generation) else { return 0 }
                 allItems += items
                 succeeded = true
             } catch {
@@ -321,7 +352,7 @@ actor ImagePool {
         itemsTask = nil
         var seen = Set<String>()
         mediaItems = allItems.filter {
-            $0.artPath(for: imageSource, includePostersInMixed: includePostersInMixed) != nil && seen.insert($0.titleKey).inserted
+            mediaFilter.matches($0) && ArtworkSelection.path(for: $0, source: imageSource, includePostersInMixed: includePostersInMixed, width: cellWidth, height: cellHeight) != nil && seen.insert($0.titleKey).inserted
         }
         // Remove cached candidates excluded by the successfully fetched catalogue.
         let available = Set(mediaItems.map(\.titleKey))
@@ -340,11 +371,11 @@ actor ImagePool {
     /// slots while the background queue replenishes. The total queue is bounded.
     @discardableResult
     func prefill(count: Int? = nil) async -> Int {
-        guard !isStopped, !Task.isCancelled, !isRefilling, !mediaItems.isEmpty else { return pool.count }
+        guard !isStopped, !runtimePolicy.pausesPlayback, !Task.isCancelled, !isRefilling, !mediaItems.isEmpty else { return pool.count }
         let refillID = UUID()
         activeRefillID = refillID
         defer { if activeRefillID == refillID { activeRefillID = nil } }
-        let target = min(poolSize, max(0, count ?? poolSize), mediaItems.count)
+        let target = min(poolSize, max(0, count ?? poolSize), mediaItems.count, runtimePolicy.prefetchLimit ?? poolSize)
         var attempts = 0
         var failures = 0
         let generation = catalogueGeneration
@@ -367,11 +398,11 @@ actor ImagePool {
     }
 
     func takeImage() async -> ImageWithMetadata? {
-        guard !isStopped, !Task.isCancelled else { return nil }
+        guard !isStopped, !runtimePolicy.pausesPlayback, !Task.isCancelled else { return nil }
         while !pool.isEmpty {
             let candidate = pool.removeFirst()
             queuedBytes -= ImageCache.byteCost(of: candidate.image)
-            guard let lease = await registry.reserve(artPath: candidate.artPath, titleKey: candidate.titleKey, namespace: namespace) else { continue }
+            guard let lease = await registry.reserve(artPath: candidate.artPath, titleKey: candidate.titleKey, namespace: reservationNamespace) else { continue }
             guard !isStopped, !Task.isCancelled else {
                 await registry.release(lease: lease)
                 return nil
@@ -382,6 +413,37 @@ actor ImagePool {
         }
         triggerRefillIfNeeded()
         return nil
+    }
+
+    /// Only the renderer can confirm display. Downloads and speculative takes
+    /// do not poison the next session's opening selection.
+    func didDisplay(_ item: ImageWithMetadata) async {
+        guard let recentHistory, let lease = item.lease, leases[lease.id] == lease else { return }
+        recentTitleDates[RecentTitleHistory.digest(item.titleKey)] = now()
+        await recentHistory.recordDisplayed(titleKey: item.titleKey)
+    }
+
+    /// Cancel optional work immediately; existing visible leases and cached
+    /// candidates stay available for lower-energy or cache-only rotation.
+    func updateRuntimePolicy(_ policy: PlaybackRuntimePolicy) async {
+        guard !isStopped, runtimePolicy != policy else { return }
+        runtimePolicy = policy
+        let previousOwner = owner
+        requestGeneration += 1
+        owner = UUID()
+        refillTask?.cancel()
+        refillTask = nil
+        refillTaskID = nil
+        activeRefillID = nil
+        if !policy.allowsNetwork {
+            catalogueGeneration += 1
+            librariesTask?.cancel()
+            librariesTask = nil
+            itemsTask?.cancel()
+            itemsTask = nil
+        }
+        await ImageRequestCoalescer.shared.cancel(owner: previousOwner)
+        lastRefillResult = policy.pausesPlayback ? "paused for temperature" : (policy.allowsNetwork ? "energy saving" : "saved artwork only")
     }
 
     func release(item: ImageWithMetadata) async {
@@ -420,6 +482,8 @@ actor ImagePool {
         lastRefillResult = "stopped"
     }
 
+    var catalogueItemCount: Int { mediaItems.count }
+
     func stats() -> PoolStats {
         PoolStats(poolDepth: pool.count, poolCapacity: poolSize,
                   reservedByThisPool: leases.count, lastRefillResult: lastRefillResult,
@@ -427,11 +491,11 @@ actor ImagePool {
     }
 
     private func active(_ generation: Int) -> Bool {
-        !isStopped && !Task.isCancelled && catalogueGeneration == generation
+        !isStopped && !runtimePolicy.pausesPlayback && !Task.isCancelled && catalogueGeneration == generation
     }
 
     private func triggerRefillIfNeeded() {
-        guard !isStopped, !isRefilling, refillTask == nil, pool.count < max(1, poolSize / 2) else { return }
+        guard !isStopped, !runtimePolicy.pausesPlayback, !isRefilling, refillTask == nil, pool.count < max(1, min(poolSize / 2, runtimePolicy.prefetchLimit ?? poolSize)) else { return }
         let taskID = UUID()
         refillTaskID = taskID
         refillTask = Task { [weak self] in
@@ -448,7 +512,10 @@ actor ImagePool {
     }
 
     private func reshuffleIndices() {
-        shuffledIndices = Array(mediaItems.indices).shuffled()
+        // Randomize ties, then prefer titles that have not appeared recently.
+        // History changes order only; even a one-title library remains usable.
+        let dates = mediaItems.map { recentTitleDates[RecentTitleHistory.digest($0.titleKey)] ?? .distantPast }
+        shuffledIndices = Array(mediaItems.indices).shuffled().sorted { dates[$0] < dates[$1] }
         currentIndex = 0
     }
 
@@ -458,7 +525,7 @@ actor ImagePool {
         guard let index = shuffledIndices.dropFirst(currentIndex).first else { return nil }
         currentIndex += 1
         let item = mediaItems[index]
-        guard let path = item.artPath(for: imageSource, includePostersInMixed: includePostersInMixed) else { return nil }
+        guard let path = ArtworkSelection.path(for: item, source: imageSource, includePostersInMixed: includePostersInMixed, width: cellWidth, height: cellHeight) else { return nil }
         return (item, path)
     }
 
@@ -486,7 +553,7 @@ actor ImagePool {
             return candidate(item, artPath: artPath, image: image)
         }
         guard activeRequest(request) else { return nil }
-        if networkRetryAfter.map({ $0 > now() }) != true {
+        if runtimePolicy.allowsNetwork, networkRetryAfter.map({ $0 > now() }) != true {
             do {
                 let image = try await ImageRequestCoalescer.shared.image(for: cacheKey, owner: requestOwner) { [provider] in
                     let fetched = try await provider.fetchImage(path: artPath, width: width, height: height)

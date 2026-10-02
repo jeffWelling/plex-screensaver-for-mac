@@ -9,6 +9,12 @@ class MontageView: ScreenSaverView {
     lazy var configSheetController = ConfigureSheetController()
     private let instanceNumber: Int
     private var started = false
+    private var hostWantsAnimation = false
+    private var displaysAsleep = false
+    private var previewConfiguration: (settings: SaverSettings, connection: ConnectionSnapshot)?
+    private var runtimePolicy = PlaybackRuntimePolicy.resolve(lowPower: ProcessInfo.processInfo.isLowPowerModeEnabled,
+                                                              thermalState: ProcessInfo.processInfo.thermalState)
+    private var energyTask: Task<Void, Never>?
     private var generation = UUID()
     private var runTask: Task<Void, Never>?
     private var geometryTask: Task<Void, Never>?
@@ -55,6 +61,19 @@ class MontageView: ScreenSaverView {
                                                 name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification) { [weak self] _ in
                 MainActor.assumeIsolated { self?.gridManager?.updateAccessibilityAppearance() }
             })
+        for name in [Notification.Name.NSProcessInfoPowerStateDidChange, ProcessInfo.thermalStateDidChangeNotification] {
+            observers.append(NotificationObservation(center: .default, name: name) { [weak self] _ in
+                MainActor.assumeIsolated { self?.refreshRuntimePolicy() }
+            })
+        }
+        observers.append(NotificationObservation(center: NSWorkspace.shared.notificationCenter,
+                                                name: NSWorkspace.screensDidSleepNotification) { [weak self] _ in
+            MainActor.assumeIsolated { self?.screensDidSleep() }
+        })
+        observers.append(NotificationObservation(center: NSWorkspace.shared.notificationCenter,
+                                                name: NSWorkspace.screensDidWakeNotification) { [weak self] _ in
+            MainActor.assumeIsolated { self?.screensDidWake() }
+        })
         OSLog.event("view.created", detail: "instance=\(instanceNumber), preview=\(isPreview)")
     }
 
@@ -64,33 +83,56 @@ class MontageView: ScreenSaverView {
     override var hasConfigureSheet: Bool { true }
     override var configureSheet: NSWindow? { configSheetController.window }
 
+    /// The live Options preview supplies draft settings and a staged connection.
+    /// It can share offline artwork, while reservations and recent history remain isolated.
+    func configurePreview(settings: SaverSettings, connection: ConnectionSnapshot) {
+        guard isPreview else { return }
+        previewConfiguration = (settings, connection)
+        restart()
+    }
+
     override func startAnimation() {
-        guard !started else { return }
+        hostWantsAnimation = true
+        guard !displaysAsleep, !started else { return }
         super.startAnimation()
+        beginRun()
+    }
+
+    private func beginRun() {
+        guard hostWantsAnimation, !displaysAsleep, !started else { return }
         started = true
         InstanceTracker.shared.setActive(true, instance: instanceNumber)
         let run = UUID()
         generation = run
-        let snapshot = Preferences.settingsSnapshot()
+        let snapshot = previewConfiguration?.settings ?? Preferences.settingsSnapshot()
         settings = snapshot
         buildGrid(settings: snapshot)
         showStatus("Starting Montage…")
-        runTask = Task { [weak self] in
-            guard let self else { return }
-            await self.run(settings: snapshot, generation: run)
+        if !runtimePolicy.pausesPlayback {
+            runTask = Task { [weak self] in
+                guard let self else { return }
+                await self.run(settings: snapshot, generation: run)
+            }
         }
-        startHUD(run: run)
+        if !runtimePolicy.pausesPlayback { startHUD(run: run) }
         OSLog.event("run.started", detail: "instance=\(instanceNumber)")
     }
 
     override func stopAnimation() {
+        hostWantsAnimation = false
         super.stopAnimation()
+        endRun()
+    }
+
+    private func endRun() {
         guard started else { return }
         started = false
         generation = UUID()
         InstanceTracker.shared.setActive(false, instance: instanceNumber)
         runTask?.cancel()
         runTask = nil
+        energyTask?.cancel()
+        energyTask = nil
         geometryTask?.cancel()
         geometryTask = nil
         statusTask?.cancel()
@@ -117,8 +159,63 @@ class MontageView: ScreenSaverView {
 
     private func restart() {
         guard started else { return }
-        stopAnimation()
-        startAnimation()
+        endRun()
+        beginRun()
+    }
+
+    func screensDidSleep() {
+        displaysAsleep = true
+        super.stopAnimation()
+        endRun()
+    }
+
+    func screensDidWake() {
+        displaysAsleep = false
+        if hostWantsAnimation, !started { super.startAnimation() }
+        beginRun()
+    }
+
+    private func refreshRuntimePolicy() {
+        applyRuntimePolicy(.resolve(lowPower: ProcessInfo.processInfo.isLowPowerModeEnabled,
+                                    thermalState: ProcessInfo.processInfo.thermalState))
+    }
+
+    func applyRuntimePolicy(_ policy: PlaybackRuntimePolicy) {
+        guard runtimePolicy != policy else { return }
+        let previous = runtimePolicy
+        runtimePolicy = policy
+        gridManager?.updateRuntimePolicy(policy)
+        guard started else { return }
+        if policy.pausesPlayback {
+            hudTask?.cancel()
+            hudTask = nil
+            statusTask?.cancel()
+            statusTask = nil
+            geometryTask?.cancel()
+            geometryTask = nil
+        } else if previous.pausesPlayback {
+            startHUD(run: generation)
+        }
+        runTask?.cancel()
+        runTask = nil
+        energyTask?.cancel()
+        let run = generation
+        energyTask = Task { [weak self] in
+            guard let self, self.isCurrent(run) else { return }
+            if let pool = self.imagePool { await pool.updateRuntimePolicy(policy) }
+            guard self.isCurrent(run), self.runtimePolicy == policy, let settings = self.settings else { return }
+            if policy.pausesPlayback { return }
+            if let pool = self.imagePool {
+                if policy.allowsNetwork && (!previous.allowsNetwork || self.availableItems == 0) {
+                    await self.refresh(pool: pool, settings: settings, generation: run, retryDelay: 30)
+                } else if policy.allowsNetwork {
+                    self.scheduleRefresh(after: policy.refreshInterval, pool: pool, settings: settings,
+                                         run: run, retryDelay: 30)
+                }
+            } else {
+                await self.run(settings: settings, generation: run)
+            }
+        }
     }
 
     private func isCurrent(_ run: UUID) -> Bool { started && generation == run && !Task.isCancelled }
@@ -127,34 +224,45 @@ class MontageView: ScreenSaverView {
         do {
             let provider: any MediaProvider
             let namespace: String
-            if InstanceTracker.isRunningInApp && !ProcessInfo.processInfo.arguments.contains("-MontageUseInstalledSettings") {
+            let isolatedSample = previewConfiguration == nil && InstanceTracker.isRunningInApp && !ProcessInfo.processInfo.arguments.contains("-MontageUseInstalledSettings")
+            if isolatedSample {
                 provider = SampleMediaProvider(offline: SampleMode.offline, latency: SampleMode.latency)
                 namespace = "\(AppConstants.module).sample-v1"
             } else {
-                let connection = try await Preferences.connectionSnapshot()
+                let connection: ConnectionSnapshot
+                if let configured = previewConfiguration?.connection { connection = configured }
+                else { connection = try await Preferences.connectionSnapshot() }
                 guard isCurrent(run) else { return }
-                guard !connection.serverURL.isEmpty else {
+                guard connection.provider == .local || !connection.serverURL.isEmpty else {
                     showStatus("Open Options to connect your media server.")
                     return
                 }
-                let endpoint = try ServerEndpoint(connection.serverURL)
-                guard !connection.token.isEmpty else {
+                guard connection.provider == .local || !connection.token.isEmpty else {
                     showStatus("Open Options to connect your media server.")
                     return
                 }
                 namespace = connection.profile.cacheNamespace
                 switch connection.provider {
-                case .plex: provider = PlexProvider(serverURL: endpoint.canonicalURLString, token: connection.token, fallbackURLs: connection.fallbackURLs)
+                case .plex:
+                    let endpoint = try ServerEndpoint(connection.serverURL)
+                    provider = PlexProvider(serverURL: endpoint.canonicalURLString, token: connection.token, fallbackURLs: connection.fallbackURLs)
                 case .jellyfin:
                     guard !connection.userID.isEmpty else {
                         showStatus("Open Options to reconnect Jellyfin.")
                         return
                     }
+                    let endpoint = try ServerEndpoint(connection.serverURL)
                     provider = JellyfinProvider(serverURL: endpoint.canonicalURLString,
                                                 accessToken: connection.token, userId: connection.userID)
+                case .local:
+                    guard let bookmark = connection.localFolderBookmark else {
+                        showStatus("Choose an artwork folder in Options.")
+                        return
+                    }
+                    provider = try LocalArtworkProvider(bookmarkData: bookmark)
                 }
             }
-            guard isCurrent(run) else { return }
+            guard isCurrent(run), !runtimePolicy.pausesPlayback else { return }
             if case .selected(let ids) = settings.librarySelection, ids.isEmpty {
                 showStatus("No libraries selected. Choose a library in Options.")
                 return
@@ -168,12 +276,18 @@ class MontageView: ScreenSaverView {
                                  includePostersInMixed: settings.imageSource == .mixed,
                                  cellWidth: pixelWidth, cellHeight: pixelHeight,
                                  poolSize: min(24, max(2, gridManager?.cells.count ?? 12)),
-                                 diskCache: cache)
+                                 diskCache: cache,
+                                 reservationNamespace: isPreview ? namespace + ".preview" : namespace,
+                                 recentHistory: isPreview || isolatedSample ? nil : RecentTitleHistory(namespace: namespace),
+                                 mediaFilter: settings.mediaFilter.supported(by: provider.filterCapabilities))
+            await pool.updateRuntimePolicy(runtimePolicy)
+            guard isCurrent(run), !runtimePolicy.pausesPlayback else { await pool.stop(); return }
             imagePool = pool
             let restored = await pool.restoreCachedImages(selection: settings.librarySelection)
             guard isCurrent(run) else { await pool.stop(); return }
             if restored > 0 {
-                await adaptGridIfNeeded(settings: settings, availableItems: restored, pool: pool, run: run)
+                availableItems = await pool.catalogueItemCount
+                await adaptGridIfNeeded(settings: settings, availableItems: availableItems, pool: pool, run: run)
                 guard isCurrent(run) else { await pool.stop(); return }
                 gridManager?.startRotation(imagePool: pool)
                 OSLog.metric("startup.cached_candidates", value: restored)
@@ -192,7 +306,7 @@ class MontageView: ScreenSaverView {
     /// the host can discard it even when it omits a final stop callback.
     private func refresh(pool: ImagePool, settings: SaverSettings, generation run: UUID,
                          retryDelay: Double) async {
-        guard isCurrent(run) else { return }
+        guard isCurrent(run), !runtimePolicy.pausesPlayback else { return }
         let itemCount = await pool.loadMediaItems(selection: settings.librarySelection)
         guard isCurrent(run) else { return }
         availableItems = itemCount
@@ -207,12 +321,12 @@ class MontageView: ScreenSaverView {
             gridManager?.startRotation(imagePool: pool)
             if loadError == nil && (filled > 0 || (gridManager?.occupiedCellCount ?? 0) > 0) {
                 removeStatus()
-                scheduleRefresh(after: 300, pool: pool, settings: settings, run: run, retryDelay: 30)
+                scheduleRefresh(after: runtimePolicy.refreshInterval, pool: pool, settings: settings, run: run, retryDelay: 30)
                 return
             }
         }
         if (gridManager?.occupiedCellCount ?? 0) > 0 {
-            showStatus("Offline · showing saved artwork", compact: true)
+            showStatus(runtimePolicy.allowsNetwork ? "Offline · showing saved artwork" : "Saving energy · showing saved artwork", compact: true)
             dismissStatus(after: 4, run: run)
         } else {
             showStatus("Artwork is unavailable. Montage will retry automatically.")
@@ -232,6 +346,8 @@ class MontageView: ScreenSaverView {
 
     private func scheduleRefresh(after delay: Double, pool: ImagePool, settings: SaverSettings,
                                  run: UUID, retryDelay: Double) {
+        guard runtimePolicy.allowsNetwork, !runtimePolicy.pausesPlayback else { return }
+        let delay = runtimePolicy == .normal ? delay : max(delay, runtimePolicy.refreshInterval)
         runTask = Task { [weak self] in
             do { try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) }
             catch { return }
@@ -253,9 +369,11 @@ class MontageView: ScreenSaverView {
                                   rotationInterval: settings.rotationInterval,
                                   showTitleReveal: settings.showTitleReveal,
                                   titleDisplayDuration: settings.titleDisplayDuration,
-                                  backingScale: backingScale)
+                                  backingScale: backingScale, artworkFraming: settings.artworkFraming,
+                                  transitionDuration: settings.transitionDuration)
         layer?.addSublayer(manager.rootLayer)
         gridManager = manager
+        manager.updateRuntimePolicy(runtimePolicy)
         let fade = CALayer()
         fade.frame = bounds
         fade.backgroundColor = CGColor.black
@@ -325,7 +443,7 @@ class MontageView: ScreenSaverView {
     }
 
     private func scheduleGeometryRefresh() {
-        guard started, bounds.width > 0, bounds.height > 0 else { return }
+        guard started, !runtimePolicy.pausesPlayback, bounds.width > 0, bounds.height > 0 else { return }
         geometryTask?.cancel()
         let run = generation
         geometryTask = Task { [weak self] in
@@ -394,6 +512,7 @@ class MontageView: ScreenSaverView {
 
     private func startHUD(run: UUID) {
         guard Preferences.showDebugHUD else { return }
+        hudLayer?.removeFromSuperlayer()
         let hud = CATextLayer()
         hud.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
         hud.fontSize = 11
@@ -425,6 +544,7 @@ class MontageView: ScreenSaverView {
         geometryTask?.cancel()
         statusTask?.cancel()
         hudTask?.cancel()
+        energyTask?.cancel()
         let pool = imagePool
         let grid = gridManager
         if let pool { Task { await pool.stop() } }
