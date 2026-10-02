@@ -23,11 +23,13 @@ import os.log
     init(makeViewModel: (@MainActor () -> ConfigurationViewModel)? = nil) {
         self.makeViewModel = makeViewModel ?? { ConfigurationViewModel() }
         super.init()
+        // Selector observers are removed automatically when their owner dies.
+        NotificationCenter.default.addObserver(self, selector: #selector(sheetDidEnd(_:)),
+                                               name: NSWindow.didEndSheetNotification, object: nil)
     }
 
     /// Remote hosts can request the hidden source window repeatedly before
-    /// displaying it. Keep its content stable until an actual dismissal; the
-    /// next presentation then restores saved settings with fresh discovery.
+    /// displaying it. Keep that presentation stable until an actual dismissal.
     var window: NSWindow? {
         if needsPreparation && backingWindow?.sheetParent == nil && backingWindow?.isVisible != true
             && viewModel?.isApplying != true { preparePresentation() }
@@ -51,40 +53,54 @@ import os.log
         let view = ConfigurationView(viewModel: model) { [weak self] in self?.dismiss(presentation: id) }
         let host = NSHostingController(rootView: view)
         hostingController = host
-        if let window = backingWindow { window.contentViewController = host }
-        else {
-            let window = ConfigureSheetWindow(contentViewController: host)
-            window.title = "Montage Options"
-            window.styleMask = [.titled, .closable, .resizable]
-            window.isReleasedWhenClosed = false
-            window.setContentSize(NSSize(width: 620, height: 720))
-            window.minSize = NSSize(width: 560, height: 540)
-            window.center(); window.delegate = self
-            backingWindow = window
-        }
+        // The remote host changes both geometry and window style. A dismissed
+        // window belongs to its finished presentation; do not reuse that state.
+        let window = ConfigureSheetWindow(contentViewController: host)
+        window.title = "Montage Options"
+        window.styleMask = [.titled, .closable, .resizable]
+        window.isReleasedWhenClosed = false
+        window.setContentSize(NSSize(width: 620, height: 720))
+        window.minSize = NSSize(width: 560, height: 540)
+        window.center(); window.delegate = self
+        backingWindow = window
     }
     private func dismiss(presentation id: UUID) {
-        guard id == presentationID else { return }
+        guard id == presentationID, !needsPreparation, let window = backingWindow else { return }
         viewModel?.cancelPendingOperations(); viewModel?.closeArtworkPreview()
         permitsClose = true
-        if let window = backingWindow, let parent = window.sheetParent {
+        if let parent = window.sheetParent {
             parent.endSheet(window)
             window.orderOut(nil)
-        } else { backingWindow?.close() }
+        } else { window.close() }
         permitsClose = false
+        finishPresentation(window)
+    }
+    private func finishPresentation(_ window: NSWindow) {
+        guard window === backingWindow, !needsPreparation else { return }
+        viewModel?.cancelPendingOperations(); viewModel?.closeArtworkPreview()
+        // Delayed actions from the old content must not dismiss its successor.
+        presentationID = UUID()
         needsPreparation = true
+    }
+    @objc private func sheetDidEnd(_ notification: Notification) {
+        guard let parent = notification.object as? NSWindow, let window = backingWindow,
+              window.sheetParent === parent, !parent.sheets.contains(where: { $0 === window }) else { return }
+        // AppKit posts this while sheetParent still identifies the ended sheet.
+        // Merely hiding/reparenting the source view does not end a presentation.
+        finishPresentation(window)
     }
 }
 
 extension ConfigureSheetController: NSWindowDelegate {
     func windowShouldClose(_ sender: NSWindow) -> Bool {
+        guard sender === backingWindow else { return true }
         if permitsClose { return true }
         let id = presentationID
         viewModel?.cancel { [weak self] in self?.dismiss(presentation: id) }
         return false
     }
     func windowWillClose(_ notification: Notification) {
-        viewModel?.cancelPendingOperations(); viewModel?.closeArtworkPreview()
-        needsPreparation = true
+        guard let window = notification.object as? NSWindow else { return }
+        finishPresentation(window)
     }
 }
