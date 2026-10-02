@@ -160,4 +160,19 @@ private actor OptionsPreparation: OfflineArtworkPreparing {
         controller.close()
     }
 
+    func testRemoteHostFolderChooserKeepsKeyboardFocusWithoutWindowChrome() {
+        _ = NSApplication.shared
+        let panel = ArtworkFolderOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.styleMask = .borderless
+        XCTAssertTrue(panel.canBecomeKey, "Apple's remote host removes title chrome; the native folder chooser must remain keyboard accessible")
+        XCTAssertFalse(panel.canChooseFiles)
+        XCTAssertTrue(panel.canChooseDirectories)
+        XCTAssertFalse(panel.allowsMultipleSelection)
+        panel.cancel(nil)
+        panel.close()
+    }
+
 }

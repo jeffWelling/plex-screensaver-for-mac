@@ -620,7 +620,7 @@ private struct StagedJellyfinConnection {
     func closeArtworkPreview() { previewController?.close(); previewController = nil }
     func chooseLocalFolder() {
         guard folderPanel == nil else { folderPanel?.makeKeyAndOrderFront(nil); return }
-        let panel = NSOpenPanel()
+        let panel = ArtworkFolderOpenPanel()
         panel.canChooseFiles = false; panel.canChooseDirectories = true; panel.allowsMultipleSelection = false
         panel.prompt = "Choose artwork folder"; panel.message = "Choose a folder containing JPEG, PNG, HEIC, or other supported images."
         folderPanel = panel
@@ -691,4 +691,11 @@ private final class ConfigurationObserver: @unchecked Sendable {
         token = center.addObserver(forName: name, object: nil, queue: .main, using: handler)
     }
     deinit { center.removeObserver(token) }
+}
+
+
+/// Keep the native folder chooser keyboard accessible when the remote
+/// screensaver host removes its titled window style.
+@MainActor final class ArtworkFolderOpenPanel: NSOpenPanel {
+    override var canBecomeKey: Bool { true }
 }
