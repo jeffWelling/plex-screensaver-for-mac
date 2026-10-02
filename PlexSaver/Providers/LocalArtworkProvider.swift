@@ -215,3 +215,87 @@ struct CachedOnlyLocalArtworkProvider: MediaProvider {
         throw LocalArtworkError.chooseFolderAgain
     }
 }
+
+/// Reopens the previously authorized folder during finite catalogue refreshes.
+/// Initialization grants no access; a disconnected folder leaves only its
+/// bookmark in memory while the caller continues using existing disk artwork.
+actor RecoveringLocalArtworkProvider: MediaProvider {
+    typealias ProviderFactory = @Sendable (Data) throws -> any MediaProvider
+    nonisolated let serverName = "Local artwork"
+    nonisolated let requiresNetwork = false
+    private let bookmarkData: Data
+    private let makeProvider: ProviderFactory
+    private var provider: (any MediaProvider)?
+    private var providerGeneration = 0
+
+    init(bookmarkData: Data, initialProvider: LocalArtworkProvider? = nil,
+         makeProvider: @escaping ProviderFactory = { try LocalArtworkProvider(bookmarkData: $0) }) {
+        self.bookmarkData = bookmarkData
+        self.makeProvider = makeProvider
+        self.provider = initialProvider
+    }
+
+    func fetchLibraries() async throws -> [MediaLibrary] {
+        let (current, generation) = try openForCatalogue()
+        do {
+            let libraries = try await current.fetchLibraries()
+            try Task.checkCancellation()
+            return libraries
+        } catch {
+            invalidate(generation)
+            throw error
+        }
+    }
+
+    func fetchItems(libraryId: String) async throws -> [MediaItem] {
+        let (current, generation) = try openForCatalogue()
+        do {
+            let items = try await current.fetchItems(libraryId: libraryId)
+            try Task.checkCancellation()
+            return items
+        } catch {
+            invalidate(generation)
+            throw error
+        }
+    }
+
+    func fetchImage(path: String, width: Int, height: Int) async throws -> NSImage {
+        try Task.checkCancellation()
+        // Reopening for every failed image would repeatedly traverse an absent
+        // folder. The next finite catalogue refresh owns that retry instead.
+        guard let current = provider else { throw LocalArtworkError.chooseFolderAgain }
+        let generation = providerGeneration
+        do {
+            let image = try await current.fetchImage(path: path, width: width, height: height)
+            try Task.checkCancellation()
+            return image
+        } catch {
+            if Task.isCancelled || error is CancellationError ||
+                (error as? LocalArtworkError) == .chooseFolderAgain ||
+                (error as? LocalArtworkError) == .invalidFolder {
+                invalidate(generation)
+            }
+            throw error
+        }
+    }
+
+    private func openForCatalogue() throws -> (any MediaProvider, Int) {
+        try Task.checkCancellation()
+        if let provider { return (provider, providerGeneration) }
+        let created = try makeProvider(bookmarkData)
+        // Cancellation during folder resolution must release its provisional
+        // scope and descriptor rather than retain them after Options closes.
+        try Task.checkCancellation()
+        providerGeneration &+= 1
+        provider = created
+        return (created, providerGeneration)
+    }
+
+    private func invalidate(_ generation: Int) {
+        // A late response from an earlier provider cannot discard a successful
+        // reconnection that another catalogue request already established.
+        guard providerGeneration == generation else { return }
+        provider = nil
+        providerGeneration &+= 1
+    }
+}

@@ -164,6 +164,84 @@ final class LocalArtworkTests: XCTestCase {
         XCTAssertTrue(JellyfinProvider(serverURL: "https://fixture.invalid", accessToken: "token", userId: "user").requiresNetwork)
     }
 
+    func testRecoveringProviderReopensUnavailableFolderInSameSession() async throws {
+        let root = try folder()
+        try image(at: root.appendingPathComponent("photo.png"))
+        let bookmark = try LocalArtworkFolder.bookmark(for: root)
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: root.path)
+        addTeardownBlock { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: root.path) }
+        let provider = RecoveringLocalArtworkProvider(bookmarkData: bookmark)
+        XCTAssertFalse(provider.requiresNetwork)
+        do { _ = try await provider.fetchItems(libraryId: LocalArtworkProvider.libraryID); XCTFail("Expected unavailable folder") }
+        catch { XCTAssertEqual(error as? LocalArtworkError, .chooseFolderAgain) }
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: root.path)
+        let libraries = try await provider.fetchLibraries()
+        XCTAssertEqual(libraries.map(\.id), [LocalArtworkProvider.libraryID])
+        let items = try await provider.fetchItems(libraryId: LocalArtworkProvider.libraryID)
+        let path = try XCTUnwrap(items.first?.artPaths[.fanart])
+        let artwork = try await provider.fetchImage(path: path, width: 12, height: 8)
+        XCTAssertEqual(artwork.size, NSSize(width: 12, height: 8))
+    }
+
+    func testRecoveryReopensAfterPreviouslyAvailableFolderFails() async throws {
+        let root = try folder()
+        try image(at: root.appendingPathComponent("photo.png"))
+        let bookmark = try LocalArtworkFolder.bookmark(for: root)
+        let attempts = LocalProviderLifetimeProbe()
+        let provider = RecoveringLocalArtworkProvider(bookmarkData: bookmark,
+            initialProvider: try LocalArtworkProvider(bookmarkData: bookmark)) { data in
+                attempts.recordAttempt()
+                return try LocalArtworkProvider(bookmarkData: data)
+            }
+        let initial = try await provider.fetchItems(libraryId: LocalArtworkProvider.libraryID)
+        XCTAssertEqual(initial.count, 1)
+        XCTAssertEqual(attempts.attemptCount, 0)
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: root.path)
+        addTeardownBlock { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: root.path) }
+        do { _ = try await provider.fetchItems(libraryId: LocalArtworkProvider.libraryID); XCTFail("Expected unavailable folder") }
+        catch { XCTAssertEqual(error as? LocalArtworkError, .chooseFolderAgain) }
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: root.path)
+        let recovered = try await provider.fetchItems(libraryId: LocalArtworkProvider.libraryID)
+        XCTAssertEqual(recovered.count, 1)
+        XCTAssertEqual(attempts.attemptCount, 1)
+    }
+
+    func testRecoveryDoesNotRetryOpeningForEveryUnavailableImage() async throws {
+        let attempts = LocalProviderLifetimeProbe()
+        let provider = RecoveringLocalArtworkProvider(bookmarkData: Data()) { _ in
+            attempts.recordAttempt()
+            throw LocalArtworkError.chooseFolderAgain
+        }
+        for _ in 0..<3 {
+            do { _ = try await provider.fetchImage(path: "saved", width: 12, height: 8); XCTFail("Expected unavailable folder") }
+            catch { XCTAssertEqual(error as? LocalArtworkError, .chooseFolderAgain) }
+        }
+        XCTAssertEqual(attempts.attemptCount, 0)
+        do { _ = try await provider.fetchLibraries(); XCTFail("Expected unavailable folder") }
+        catch { XCTAssertEqual(error as? LocalArtworkError, .chooseFolderAgain) }
+        do { _ = try await provider.fetchItems(libraryId: LocalArtworkProvider.libraryID); XCTFail("Expected unavailable folder") }
+        catch { XCTAssertEqual(error as? LocalArtworkError, .chooseFolderAgain) }
+        XCTAssertEqual(attempts.attemptCount, 2)
+    }
+
+    func testCancellationDuringRecoveryReleasesProvisionalProvider() async throws {
+        let root = try folder()
+        let bookmark = try LocalArtworkFolder.bookmark(for: root)
+        let lifetime = LocalProviderLifetimeProbe()
+        let provider = RecoveringLocalArtworkProvider(bookmarkData: bookmark) { data in
+            let opened = try LocalArtworkProvider(bookmarkData: data)
+            lifetime.record(opened)
+            withUnsafeCurrentTask { $0?.cancel() }
+            return opened
+        }
+        let task = Task { try await provider.fetchLibraries() }
+        do { _ = try await task.value; XCTFail("Expected cancellation") }
+        catch is CancellationError {} catch { XCTFail("Unexpected \(error)") }
+        XCTAssertTrue(lifetime.isReleased)
+        do { _ = try await provider.fetchImage(path: "saved", width: 12, height: 8); XCTFail("Canceled provisional provider must not be retained") }
+        catch { XCTAssertEqual(error as? LocalArtworkError, .chooseFolderAgain) }
+    }
+
     func testMissingFolderReportsActionableSelectionError() throws {
         let root = try folder()
         let bookmark = try LocalArtworkFolder.bookmark(for: root)
@@ -172,4 +250,16 @@ final class LocalArtworkTests: XCTestCase {
             XCTAssertEqual($0 as? LocalArtworkError, .chooseFolderAgain)
         }
     }
+}
+
+/// Synchronizes the factory callback and test task without retaining the local
+/// provider whose scope/descriptor lifecycle is under examination.
+private final class LocalProviderLifetimeProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private weak var opened: LocalArtworkProvider?
+    private var attempts = 0
+    func record(_ provider: LocalArtworkProvider) { lock.lock(); opened = provider; lock.unlock() }
+    func recordAttempt() { lock.lock(); attempts += 1; lock.unlock() }
+    var attemptCount: Int { lock.lock(); defer { lock.unlock() }; return attempts }
+    var isReleased: Bool { lock.lock(); defer { lock.unlock() }; return opened == nil }
 }
