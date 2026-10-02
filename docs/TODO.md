@@ -37,7 +37,7 @@
 - Exercise Jellyfin filters against a real server; local tests cover provider responses.
 
 The 2026-10-02 hardening and 0.7.0 experience releases supersede the old
-implementation backlog. Current coverage is 184 Swift tests and 9 Python
+implementation backlog. Current coverage is 185 Swift tests and 9 Python
 tests. Options and artwork playback have been checked in System Settings.
 
 ## Historical reviews
