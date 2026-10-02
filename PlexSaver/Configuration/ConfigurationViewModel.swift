@@ -6,6 +6,10 @@ protocol ConfigurationServices: Sendable {
     func plexServers(token: String) async throws -> [PlexServer]
     func libraries(connection: ConnectionSnapshot) async throws -> [MediaLibrary]
     func jellyfinSignIn(serverURL: String, username: String, password: String) async throws -> (accessToken: String, userId: String)
+    func filterOptions(connection: ConnectionSnapshot, libraryIds: [String]) async throws -> MediaFilterOptions
+}
+extension ConfigurationServices {
+    func filterOptions(connection: ConnectionSnapshot, libraryIds: [String]) async throws -> MediaFilterOptions { MediaFilterOptions() }
 }
 
 struct DefaultConfigurationServices: ConfigurationServices {
@@ -21,13 +25,13 @@ struct DefaultConfigurationServices: ConfigurationServices {
     func plexAccountID(token: String) async throws -> String { try await PlexAuth().fetchAccountID(authToken: token) }
     func plexServers(token: String) async throws -> [PlexServer] { try await PlexAuth().discoverServers(authToken: token) }
     func libraries(connection: ConnectionSnapshot) async throws -> [MediaLibrary] {
-        switch connection.provider {
-        case .plex: return try await PlexClient(serverURL: connection.serverURL, token: connection.token, fallbackURLs: connection.fallbackURLs).fetchLibraries().map { $0.toMediaLibrary() }
-        case .jellyfin: return try await JellyfinProvider(serverURL: connection.serverURL, accessToken: connection.token, userId: connection.userID).fetchLibraries()
-        }
+        try await ConfigurationProviderFactory.make(connection: connection).fetchLibraries()
     }
     func jellyfinSignIn(serverURL: String, username: String, password: String) async throws -> (accessToken: String, userId: String) {
         try await JellyfinAuth().authenticate(serverURL: serverURL, username: username, password: password)
+    }
+    func filterOptions(connection: ConnectionSnapshot, libraryIds: [String]) async throws -> MediaFilterOptions {
+        try await ConfigurationProviderFactory.make(connection: connection).fetchFilterOptions(libraryIds: libraryIds)
     }
 }
 
@@ -73,6 +77,14 @@ private struct StagedJellyfinConnection {
     @Published var gridAutoColumns = false
     @Published var rotationInterval = 5.0
     @Published var imageSource: ImageSourceType = .fanart
+    @Published var artworkFraming: ArtworkFraming = .fill
+    @Published var transitionDuration = 1.0
+    @Published var mediaFilter = MediaFilter()
+    @Published var filterOptions = MediaFilterOptions()
+    @Published var filterStatus = ""
+    @Published var localFolderBookmark: Data?
+    @Published var localFolderIdentity = ""
+    @Published var localFolderName = ""
     @Published var selectedLibraryIds: Set<String> = []
     @Published var allLibraries = true
     @Published var showTitleReveal = true
@@ -97,12 +109,19 @@ private struct StagedJellyfinConnection {
     @Published var diagnosticSummary = ""
     @Published var cacheMessage = ""
     @Published var isManagingCache = false
+    @Published var offlineReadiness = OfflineArtworkReadiness.empty
+    @Published var preparationProgress: OfflineArtworkProgress?
+    @Published var preparationMessage = ""
 
     var isTesting: Bool { connectionState == .testing }
     var testMessage: String { connectionState.message }
     var testResult: Bool? { switch connectionState { case .connected: return true; case .failed: return false; default: return nil } }
-    var isConnected: Bool { providerType == .plex ? isSignedIn : isJellyfinConnected }
+    var isConnected: Bool {
+        switch providerType { case .plex: return isSignedIn; case .jellyfin: return isJellyfinConnected; case .local: return localFolderBookmark != nil }
+    }
+    var filterCapabilities: MediaFilterCapabilities { providerType.filterCapabilities }
     var usesHTTP: Bool {
+        guard providerType != .local else { return false }
         let text = providerType == .plex ? plexServerURL : jellyfinServerURL
         return (try? ServerEndpoint(text).isSecure) == false
     }
@@ -118,9 +137,19 @@ private struct StagedJellyfinConnection {
     private var plexServerID = ""
     private var plexFallbackURLs: [String] = []
     private var dirtyCredentials: Set<String> = []
+    private var credentialsToClear: Set<String> = []
+    private var cacheProfilesToClear: Set<ConnectionProfile> = []
+    private var disconnectedJellyfin = false
     private var profileSelections: [ConnectionProfile: LibrarySelection] = [:]
+    private var profileFilters: [ConnectionProfile: MediaFilter] = [:]
     private let services: any ConfigurationServices
     private let credentials: any ConfigurationCredentials
+    private let artworkPreparation: any OfflineArtworkPreparing
+    private var filterTask: Task<Void, Never>?
+    private var previewController: ArtworkPreviewController?
+    private var folderPanel: NSOpenPanel?
+    private var workspaceObserver: ConfigurationObserver?
+    private var thermalObserver: ConfigurationObserver?
     private var operationTask: Task<Void, Never>?
     private var restoreTask: Task<Void, Never>?
     private var cacheTask: Task<Void, Never>?
@@ -129,11 +158,14 @@ private struct StagedJellyfinConnection {
     private var generation = 0
     private var initialized = false
 
-    init(services: any ConfigurationServices = DefaultConfigurationServices(), credentials: any ConfigurationCredentials = DefaultConfigurationCredentials(), restoreCredentials: Bool = true) {
-        self.services = services; self.credentials = credentials
+    init(services: any ConfigurationServices = DefaultConfigurationServices(), credentials: any ConfigurationCredentials = DefaultConfigurationCredentials(), artworkPreparation: any OfflineArtworkPreparing = OfflineArtworkPreparation.forConnectedDisplays(), restoreCredentials: Bool = true) {
+        self.services = services; self.credentials = credentials; self.artworkPreparation = artworkPreparation
         let settings = Preferences.settingsSnapshot()
         gridRows = settings.rows; gridColumns = settings.columns; gridAutoColumns = settings.autoColumns
         rotationInterval = settings.rotationInterval; imageSource = settings.imageSource
+        artworkFraming = settings.artworkFraming; transitionDuration = settings.transitionDuration
+        localFolderBookmark = Preferences.localFolderBookmark; localFolderIdentity = Preferences.localFolderIdentity
+        localFolderName = localFolderBookmark.flatMap { LocalArtworkFolder.displayName(bookmarkData: $0) } ?? ""
         showTitleReveal = settings.showTitleReveal; titleDisplayDuration = settings.titleDisplayDuration
         providerType = Preferences.providerType
         plexServerURL = Preferences.plexServerURL; selectedServerURI = plexServerURL
@@ -143,21 +175,40 @@ private struct StagedJellyfinConnection {
         installedJellyfinConnection = JellyfinConnectionMetadata(serverURL: jellyfinServerURL, username: jellyfinUsername, userID: jellyfinUserID)
         loadSelection(for: currentProfile)
         initialized = true
+        workspaceObserver = ConfigurationObserver(center: NSWorkspace.shared.notificationCenter, name: NSWorkspace.screensDidSleepNotification) { [weak self] _ in
+            Task { @MainActor in self?.cancelArtworkPreparation(reason: "Preparation canceled while the display sleeps. Downloaded artwork was kept.") }
+        }
+        thermalObserver = ConfigurationObserver(center: .default, name: ProcessInfo.thermalStateDidChangeNotification) { [weak self] _ in
+            Task { @MainActor in
+                if ProcessInfo.processInfo.thermalState == .serious || ProcessInfo.processInfo.thermalState == .critical {
+                    self?.cancelArtworkPreparation(reason: "Preparation canceled while the Mac cools down. Downloaded artwork was kept.")
+                }
+            }
+        }
         if restoreCredentials { restore() }
     }
-    deinit { operationTask?.cancel(); restoreTask?.cancel(); cacheTask?.cancel(); diagnosticTask?.cancel() }
+    deinit {
+        operationTask?.cancel(); restoreTask?.cancel(); cacheTask?.cancel(); diagnosticTask?.cancel(); filterTask?.cancel()
+    }
 
     var currentProfile: ConnectionProfile {
-        ConnectionProfile(provider: providerType, serverURL: providerType == .plex ? plexServerURL : jellyfinServerURL,
-                          accountID: providerType == .plex ? plexAccountID : jellyfinUserID, serverID: providerType == .plex ? plexServerID : "")
+        profile(for: providerType)
     }
-    private var currentSelection: LibrarySelection { allLibraries ? .all : .selected(selectedLibraryIds) }
-    private var currentConnection: ConnectionSnapshot {
+    private func profile(for provider: ProviderType) -> ConnectionProfile {
+        switch provider {
+        case .plex: return ConnectionProfile(provider: .plex, serverURL: plexServerURL, accountID: plexAccountID, serverID: plexServerID)
+        case .jellyfin: return ConnectionProfile(provider: .jellyfin, serverURL: jellyfinServerURL, accountID: jellyfinUserID)
+        case .local: return ConnectionProfile(provider: .local, serverURL: "", accountID: localFolderIdentity)
+        }
+    }
+    var currentSelection: LibrarySelection { allLibraries ? .all : .selected(selectedLibraryIds) }
+    var currentConnection: ConnectionSnapshot {
         ConnectionSnapshot(provider: providerType, serverURL: currentProfile.serverURL,
                            token: providerType == .plex ? plexToken : jellyfinToken,
-                           userID: jellyfinUserID, accountID: currentProfile.accountID, serverID: currentProfile.serverID, fallbackURLs: providerType == .plex ? plexFallbackURLs : [])
+                           userID: jellyfinUserID, accountID: currentProfile.accountID, serverID: currentProfile.serverID, fallbackURLs: providerType == .plex ? plexFallbackURLs : [], localFolderBookmark: localFolderBookmark)
     }
     private func loadSelection(for profile: ConnectionProfile) {
+        mediaFilter = (profileFilters[profile] ?? Preferences.mediaFilter(for: profile)).supported(by: profile.provider.filterCapabilities)
         let selection = profileSelections[profile] ?? Preferences.librarySelection(for: profile)
         switch selection { case .all: allLibraries = true; selectedLibraryIds = []; case .selected(let ids): allLibraries = false; selectedLibraryIds = ids }
     }
@@ -165,6 +216,7 @@ private struct StagedJellyfinConnection {
         generation += 1
         operationTask?.cancel(); operationTask = nil
         restoreTask?.cancel(); restoreTask = nil
+        filterTask?.cancel(); filterTask = nil
         isSigningIn = false; isJellyfinConnecting = false; isRestoring = false
         connectionState = .idle
     }
@@ -172,15 +224,17 @@ private struct StagedJellyfinConnection {
         let canceledPlexSignIn = isSigningIn || pendingAuthToken != nil
         let canceledJellyfinSignIn = isJellyfinConnecting
         cancelOperations(); cacheTask?.cancel(); diagnosticTask?.cancel()
+        folderPanel?.cancel(nil); folderPanel = nil
         pendingAuthToken = nil; pendingPlexAccountID = nil; discoveredServers = []; jellyfinPassword = ""
         isSignedIn = !plexServerURL.isEmpty && !plexToken.isEmpty
         if canceledPlexSignIn { signInStatus = "Sign-in canceled" }
         if canceledJellyfinSignIn { jellyfinStatus = "Connection canceled" }
-        cacheOperationID = UUID(); isManagingCache = false
+        cacheOperationID = UUID(); isManagingCache = false; preparationProgress = nil
     }
     private func accepts(_ id: Int, provider: ProviderType) -> Bool { id == generation && provider == providerType && !Task.isCancelled }
     private func connectionInputChanged(provider: ProviderType) {
         guard initialized, !updatesConnectionInternally else { return }
+        cancelArtworkPreparation(); closeArtworkPreview()
         if provider == .jellyfin {
             let bound = stagedJellyfinConnection?.metadata ?? installedJellyfinConnection
             let editedEndpoint = (try? ServerEndpoint(jellyfinServerURL).canonicalURLString) ?? jellyfinServerURL
@@ -201,9 +255,10 @@ private struct StagedJellyfinConnection {
     }
     private func providerChanged(from oldProvider: ProviderType) {
         guard initialized else { return }
-        let oldProfile = ConnectionProfile(provider: oldProvider, serverURL: oldProvider == .plex ? plexServerURL : jellyfinServerURL,
-                                           accountID: oldProvider == .plex ? plexAccountID : jellyfinUserID, serverID: oldProvider == .plex ? plexServerID : "")
+        let oldProfile = profile(for: oldProvider)
         profileSelections[oldProfile] = currentSelection
+        profileFilters[oldProfile] = mediaFilter
+        cancelArtworkPreparation(); closeArtworkPreview(); filterOptions = MediaFilterOptions(); filterStatus = ""
         cancelOperations(); discoveredLibraries = []; jellyfinPassword = ""
         pendingAuthToken = nil; pendingPlexAccountID = nil; discoveredServers = []
         loadSelection(for: currentProfile)
@@ -211,6 +266,9 @@ private struct StagedJellyfinConnection {
     }
     func retryCredentials() { restore(allowInteraction: true) }
     private func restore(allowInteraction: Bool = false) {
+        if providerType == .local { testConnection(); return }
+        let keys = providerType == .plex ? ["PlexToken", "PlexAuthToken"] : ["JellyfinAccessToken"]
+        guard credentialsToClear.isDisjoint(with: keys) else { return }
         cancelOperations()
         let id = generation, provider = providerType
         let originalProfile = currentProfile, originalUsername = jellyfinUsername
@@ -290,15 +348,16 @@ private struct StagedJellyfinConnection {
     }
     func selectServer(_ server: PlexServer) {
         profileSelections[currentProfile] = currentSelection
+        profileFilters[currentProfile] = mediaFilter
         cancelOperations()
         if let pendingAuthToken, let pendingPlexAccountID {
             authToken = pendingAuthToken; plexAccountID = pendingPlexAccountID
-            dirtyCredentials.insert("PlexAuthToken")
+            dirtyCredentials.insert("PlexAuthToken"); credentialsToClear.remove("PlexAuthToken")
             self.pendingAuthToken = nil; self.pendingPlexAccountID = nil
         }
         plexServerURL = server.uri; plexToken = server.token; selectedServerURI = server.uri
         plexServerID = server.id; plexFallbackURLs = server.connections.map(\.uri)
-        dirtyCredentials.insert("PlexToken"); isSignedIn = true
+        dirtyCredentials.insert("PlexToken"); credentialsToClear.remove("PlexToken"); isSignedIn = true
         signInStatus = "Connected to \(server.name)"; loadSelection(for: currentProfile)
         testConnection()
     }
@@ -323,34 +382,23 @@ private struct StagedJellyfinConnection {
     func signOut() { disconnect(provider: .plex) }
     func disconnectJellyfin() { disconnect(provider: .jellyfin) }
     private func disconnect(provider: ProviderType) {
-        let profile = currentProfile
-        let cacheProfiles: Set<ConnectionProfile> = provider == .jellyfin ? [profile, installedJellyfinConnection.profile] : [profile]
-        cancelOperations(); pendingAuthToken = nil; pendingPlexAccountID = nil; discoveredLibraries = []; discoveredServers = []
+        let profile = profile(for: provider)
+        cacheProfilesToClear.insert(profile)
+        if provider == .jellyfin { cacheProfilesToClear.insert(installedJellyfinConnection.profile) }
+        cancelOperations(); cancelArtworkPreparation(); closeArtworkPreview()
+        pendingAuthToken = nil; pendingPlexAccountID = nil; discoveredLibraries = []; discoveredServers = []
+        let keys = provider == .plex ? ["PlexToken", "PlexAuthToken"] : ["JellyfinAccessToken"]
+        credentialsToClear.formUnion(keys); dirtyCredentials.subtract(keys)
         if provider == .plex {
-            plexToken = ""; authToken = ""; isSignedIn = false; plexServerURL = ""; selectedServerURI = ""; plexAccountID = ""
-            Preferences.plexServerURL = ""; Preferences.plexAccountID = ""; plexServerID = ""; plexFallbackURLs = []; Preferences.plexServerID = ""; Preferences.plexFallbackURLs = []
+            plexToken = ""; authToken = ""; isSignedIn = false; plexServerURL = ""; selectedServerURI = ""
+            plexAccountID = ""; plexServerID = ""; plexFallbackURLs = []
+            signInStatus = "Sign-out will take effect when you apply changes."
         } else {
             jellyfinToken = ""; jellyfinUserID = ""; jellyfinPassword = ""; isJellyfinConnected = false
-            Preferences.jellyfinUserId = ""
-            stagedJellyfinConnection = nil
-            installedJellyfinConnection = JellyfinConnectionMetadata(serverURL: installedJellyfinConnection.serverURL, username: installedJellyfinConnection.username, userID: "")
+            stagedJellyfinConnection = nil; disconnectedJellyfin = true
+            jellyfinStatus = "Disconnect will take effect when you apply changes."
         }
-        let keys = provider == .plex ? ["PlexToken", "PlexAuthToken"] : ["JellyfinAccessToken"]
-        dirtyCredentials.subtract(keys)
-        storageMessage = ""; isApplying = true
-        operationTask = Task { [weak self] in
-            guard let self else { return }
-            var errors: [String] = []
-            for key in keys { do { try await credentials.clear(key) } catch { errors.append(error.localizedDescription) } }
-            for cacheProfile in cacheProfiles {
-                let cache = await DiskCacheCoordinator.shared.cache(for: cacheProfile.namespace)
-                await cache.clear()
-            }
-            isApplying = false
-            storageMessage = errors.joined(separator: "\n")
-            Preferences.defaults.synchronize()
-            NotificationCenter.default.post(name: .montageConfigChanged, object: nil)
-        }
+        storageMessage = ""
     }
 
     func connectToJellyfin() {
@@ -372,7 +420,7 @@ private struct StagedJellyfinConnection {
                 jellyfinServerURL = server; jellyfinToken = result.accessToken; jellyfinUserID = result.userId
                 stagedJellyfinConnection = StagedJellyfinConnection(metadata: JellyfinConnectionMetadata(serverURL: server, username: username, userID: result.userId), token: result.accessToken)
                 updatesConnectionInternally = false
-                dirtyCredentials.insert("JellyfinAccessToken")
+                dirtyCredentials.insert("JellyfinAccessToken"); credentialsToClear.remove("JellyfinAccessToken"); disconnectedJellyfin = false
                 isJellyfinConnected = true; isJellyfinConnecting = false; jellyfinStatus = "Connected"
                 jellyfinPassword = ""; loadSelection(for: currentProfile); testConnection()
             } catch {
@@ -383,7 +431,7 @@ private struct StagedJellyfinConnection {
     }
     func testConnection() {
         let connection = currentConnection
-        guard !connection.serverURL.isEmpty, !connection.token.isEmpty else { connectionState = .failed("Sign in to load your libraries"); return }
+        guard isConnected, connection.provider == .local || (!connection.serverURL.isEmpty && !connection.token.isEmpty) else { connectionState = .failed("Sign in to load your libraries"); return }
         cancelOperations()
         let id = generation
         connectionState = .testing
@@ -395,7 +443,7 @@ private struct StagedJellyfinConnection {
                 discoveredLibraries = libraries
                 if !allLibraries { selectedLibraryIds.formIntersection(Set(libraries.map(\.id))) }
                 connectionState = .connected(libraries.count)
-                refreshDiagnostics()
+                refreshDiagnostics(); refreshFilterOptions()
             } catch {
                 guard accepts(id, provider: connection.provider), currentProfile == connection.profile, currentProfile.serverURL == connection.profile.serverURL else { return }
                 connectionState = .failed(error.localizedDescription)
@@ -413,7 +461,7 @@ private struct StagedJellyfinConnection {
     /// Single explicit flush → notify → dismiss path; no debounced writes.
     func apply(onSuccess: @escaping () -> Void) {
         guard !isApplying else { return }
-        cancelPendingOperations()
+        cancelPendingOperations(); closeArtworkPreview()
         isApplying = true; storageMessage = ""
         let draftProfile = currentProfile
         let staged = stagedJellyfinConnection.flatMap { connection in
@@ -421,27 +469,37 @@ private struct StagedJellyfinConnection {
             return endpoint == connection.metadata.serverURL && jellyfinUsername == connection.metadata.username
                 && jellyfinUserID == connection.metadata.userID && jellyfinToken == connection.token ? connection : nil
         }
-        let effectiveJellyfin = staged?.metadata ?? installedJellyfinConnection
+        let effectiveJellyfin = staged?.metadata ?? (disconnectedJellyfin
+            ? JellyfinConnectionMetadata(serverURL: installedJellyfinConnection.serverURL, username: installedJellyfinConnection.username, userID: "")
+            : installedJellyfinConnection)
         let profile = providerType == .jellyfin ? effectiveJellyfin.profile : currentProfile
         let sameBinding = draftProfile == profile && draftProfile.serverURL == profile.serverURL
         let selection = sameBinding ? currentSelection : (profileSelections[profile] ?? Preferences.librarySelection(for: profile))
         let pending: [String: String] = ["PlexToken": plexToken, "PlexAuthToken": authToken, "JellyfinAccessToken": staged?.token ?? ""]
+        let clearKeys = credentialsToClear.sorted()
+        let clearProfiles = cacheProfilesToClear
+        let pendingLocalBookmark = localFolderBookmark, pendingLocalIdentity = localFolderIdentity
         let credentialKeys = dirtyCredentials.filter { $0 != "JellyfinAccessToken" || staged != nil }.sorted()
         let pendingConnections = (plexServerURL, plexAccountID, plexServerID, plexFallbackURLs,
                                   effectiveJellyfin.serverURL, effectiveJellyfin.username, effectiveJellyfin.userID, providerType)
+        var filters = profileFilters
+        filters[profile] = sameBinding ? mediaFilter : (profileFilters[profile] ?? Preferences.mediaFilter(for: profile))
         var selections = profileSelections
         selections[profile] = selection
         let settings = SaverSettings(rows: gridRows, columns: gridColumns, autoColumns: gridAutoColumns,
             rotationInterval: rotationInterval, imageSource: imageSource, showTitleReveal: showTitleReveal,
-            titleDisplayDuration: titleDisplayDuration, librarySelection: selection)
+            titleDisplayDuration: titleDisplayDuration, librarySelection: selection, artworkFraming: artworkFraming, transitionDuration: transitionDuration, mediaFilter: filters[profile] ?? MediaFilter())
         operationTask = Task { [weak self] in
             guard let self, !Task.isCancelled else { return }
             do {
+                for key in clearKeys { try await credentials.clear(key) }
                 for key in credentialKeys { try await credentials.save(key, value: pending[key] ?? "") }
                 Preferences.plexServerURL = pendingConnections.0; Preferences.plexAccountID = pendingConnections.1
                 Preferences.plexServerID = pendingConnections.2; Preferences.plexFallbackURLs = pendingConnections.3
                 Preferences.jellyfinServerURL = pendingConnections.4; Preferences.jellyfinUsername = pendingConnections.5; Preferences.jellyfinUserId = pendingConnections.6
                 Preferences.providerType = pendingConnections.7
+                Preferences.localFolderBookmark = pendingLocalBookmark; Preferences.localFolderIdentity = pendingLocalIdentity
+                for (savedProfile, filter) in filters { Preferences.saveMediaFilter(filter, for: savedProfile) }
                 for (savedProfile, selection) in selections { Preferences.saveLibrarySelection(selection, for: savedProfile) }
                 Preferences.saveSettings(settings, profile: profile)
                 installedJellyfinConnection = effectiveJellyfin
@@ -450,7 +508,11 @@ private struct StagedJellyfinConnection {
                 jellyfinServerURL = effectiveJellyfin.serverURL; jellyfinUsername = effectiveJellyfin.username
                 jellyfinUserID = effectiveJellyfin.userID
                 updatesConnectionInternally = false
-                dirtyCredentials = []; isApplying = false
+                for savedProfile in clearProfiles {
+                    let cache = await DiskCacheCoordinator.shared.cache(for: savedProfile.namespace)
+                    await cache.clear()
+                }
+                dirtyCredentials = []; credentialsToClear = []; cacheProfilesToClear = []; disconnectedJellyfin = false; isApplying = false
                 NotificationCenter.default.post(name: .montageConfigChanged, object: nil)
                 onSuccess()
             } catch { isApplying = false; storageMessage = error.localizedDescription }
@@ -465,35 +527,168 @@ private struct StagedJellyfinConnection {
         guard !Task.isCancelled else { return }
         let cache = await DiskCacheCoordinator.shared.cache(for: profile.namespace)
         let summary = await cache.summary()
-        guard !Task.isCancelled, generation == id, currentProfile == profile, currentProfile.serverURL == profile.serverURL else { return }
+        let settings = draftSettings, dimensions = offlineDimensions(settings: settings)
+        let readiness = await artworkPreparation.readiness(connection: currentConnection, settings: settings, width: dimensions.width, height: dimensions.height)
+        guard !Task.isCancelled, generation == id, currentProfile == profile, currentProfile.serverURL == profile.serverURL, draftSettings == settings else { return }
         let size = ByteCountFormatter.string(fromByteCount: summary.sizeBytes, countStyle: .file)
+        offlineReadiness = readiness
         cacheMessage = "\(summary.count) images · \(size)"
         diagnosticSummary = "Montage \(AppConstants.version) (\(AppConstants.build))\nmacOS \(ProcessInfo.processInfo.operatingSystemVersionString)\nProvider: \(profile.provider.displayName)\nGrid: \(gridRows) × \(gridAutoColumns ? "auto" : String(gridColumns))\nArtwork: \(imageSource.displayName)\nCache: \(cacheMessage)\nCredential storage: Keychain; runtime interaction disabled\n"
     }
-    func refreshArtwork() { manageCache(retest: true) }
-    func clearCache() { manageCache(retest: false) }
-    private func manageCache(retest: Bool) {
-        let profile = currentProfile, initialGeneration = generation
-        cacheTask?.cancel(); diagnosticTask?.cancel()
-        cacheOperationID = UUID()
+    /// Refresh does not destroy working offline images or force a memory reset.
+    func refreshArtwork() { beginArtworkPreparation(refreshExisting: true) }
+    func prepareForOffline() { beginArtworkPreparation(refreshExisting: false) }
+    func cancelArtworkPreparation(reason: String? = nil) {
+        if isManagingCache { preparationMessage = reason ?? "Preparation canceled. Downloaded artwork was kept." }
+        cacheTask?.cancel(); cacheTask = nil; cacheOperationID = UUID()
+        isManagingCache = false; preparationProgress = nil
+    }
+    func clearCache() {
+        let profile = currentProfile
+        cancelArtworkPreparation(); diagnosticTask?.cancel()
         let operationID = cacheOperationID
         isManagingCache = true
         cacheTask = Task { [weak self] in
-            guard let self, !Task.isCancelled else { return }
-            defer { if cacheOperationID == operationID { isManagingCache = false } }
+            guard let self else { return }
             let cache = await DiskCacheCoordinator.shared.cache(for: profile.namespace)
-            guard !Task.isCancelled, generation == initialGeneration, currentProfile == profile, currentProfile.serverURL == profile.serverURL else { return }
+            guard !Task.isCancelled, currentProfile == profile, cacheOperationID == operationID else { return }
             await cache.clear()
-            guard !Task.isCancelled, generation == initialGeneration, currentProfile == profile, currentProfile.serverURL == profile.serverURL else { return }
-            // Clear disk first, then restart running previews to invalidate their
-            // fresh memory images. The same coordinator handles all displays.
+            guard !Task.isCancelled, currentProfile == profile, cacheOperationID == operationID else { return }
+            isManagingCache = false
             NotificationCenter.default.post(name: .montageConfigChanged, object: nil)
-            if retest { testConnection() }
             await readDiagnostics(profile: profile, generation: generation)
         }
+    }
+    private func beginArtworkPreparation(refreshExisting: Bool) {
+        guard isConnected else { preparationMessage = "Connect before preparing artwork."; return }
+        guard ProcessInfo.processInfo.thermalState != .serious && ProcessInfo.processInfo.thermalState != .critical else {
+            preparationMessage = "Let the Mac cool down before preparing artwork."; return
+        }
+        cancelArtworkPreparation(); diagnosticTask?.cancel()
+        let operationID = cacheOperationID
+        let connection = currentConnection, settings = draftSettings
+        let dimensions = offlineDimensions(settings: settings)
+        isManagingCache = true; preparationMessage = "Loading selected artwork…"
+        cacheTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let result = try await artworkPreparation.prepare(connection: connection, settings: settings,
+                    width: dimensions.width, height: dimensions.height, refreshExisting: refreshExisting) { [weak self] progress in
+                        await self?.publishPreparation(progress, operation: operationID, profile: connection.profile)
+                    }
+                guard !Task.isCancelled, cacheOperationID == operationID, currentProfile == connection.profile else { return }
+                preparationMessage = result.message
+            } catch {
+                guard !Task.isCancelled, cacheOperationID == operationID, currentProfile == connection.profile else { return }
+                preparationMessage = "Unable to refresh: \(error.localizedDescription). Cached artwork is still available."
+            }
+            guard cacheOperationID == operationID else { return }
+            isManagingCache = false; preparationProgress = nil
+            await readDiagnostics(profile: connection.profile, generation: generation)
+        }
+    }
+    private func publishPreparation(_ progress: OfflineArtworkProgress, operation: UUID, profile: ConnectionProfile) {
+        guard cacheOperationID == operation, currentProfile == profile, !Task.isCancelled else { return }
+        preparationProgress = progress
+        preparationMessage = "\(progress.completed) of \(progress.total) titles checked · \(progress.downloaded) images downloaded"
+    }
+    func cancel(onClose: () -> Void) {
+        guard !isApplying else { return }
+        cancelPendingOperations(); closeArtworkPreview()
+        onClose()
+    }
+    var draftSettings: SaverSettings {
+        SaverSettings(rows: gridRows, columns: gridColumns, autoColumns: gridAutoColumns,
+            rotationInterval: rotationInterval, imageSource: imageSource, showTitleReveal: showTitleReveal,
+            titleDisplayDuration: titleDisplayDuration, librarySelection: currentSelection,
+            artworkFraming: artworkFraming, transitionDuration: transitionDuration, mediaFilter: mediaFilter.supported(by: providerType.filterCapabilities))
+    }
+    func applyPreset(_ preset: PresentationPreset) {
+        let settings = draftSettings.applying(preset)
+        gridRows = settings.rows; gridColumns = settings.columns; gridAutoColumns = settings.autoColumns
+        imageSource = settings.imageSource; rotationInterval = settings.rotationInterval
+        showTitleReveal = settings.showTitleReveal; titleDisplayDuration = settings.titleDisplayDuration
+        artworkFraming = settings.artworkFraming; transitionDuration = settings.transitionDuration
+        refreshDiagnostics()
+    }
+    func showArtworkPreview() {
+        guard isConnected else { return }
+        if previewController == nil { previewController = ArtworkPreviewController() }
+        previewController?.show(settings: draftSettings, connection: currentConnection)
+    }
+    func updateArtworkPreview() { previewController?.update(settings: draftSettings, connection: currentConnection) }
+    func closeArtworkPreview() { previewController?.close(); previewController = nil }
+    func chooseLocalFolder() {
+        guard folderPanel == nil else { folderPanel?.makeKeyAndOrderFront(nil); return }
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false; panel.canChooseDirectories = true; panel.allowsMultipleSelection = false
+        panel.prompt = "Choose artwork folder"; panel.message = "Choose a folder containing JPEG, PNG, HEIC, or other supported images."
+        folderPanel = panel
+        let id = generation
+        panel.begin { [weak self, weak panel] response in
+            Task { @MainActor in
+                guard let self, let panel, self.folderPanel === panel else { return }
+                self.folderPanel = nil
+                guard response == .OK, let url = panel.url, self.generation == id, self.providerType == .local else { return }
+                self.stageLocalFolder(url)
+            }
+        }
+    }
+    func stageLocalFolder(_ url: URL) {
+        do {
+            let bookmark = try LocalArtworkFolder.bookmark(for: url)
+            profileSelections[currentProfile] = currentSelection; profileFilters[currentProfile] = mediaFilter
+            cancelOperations(); cancelArtworkPreparation(); closeArtworkPreview()
+            localFolderBookmark = bookmark; localFolderIdentity = LocalArtworkFolder.identity(for: url)
+            localFolderName = url.lastPathComponent; loadSelection(for: currentProfile); testConnection()
+        } catch { storageMessage = error.localizedDescription }
+    }
+    func refreshFilterOptions() {
+        filterTask?.cancel()
+        let connection = currentConnection
+        guard isConnected, providerType != .local else { filterOptions = MediaFilterOptions(); return }
+        let libraryIds = discoveredLibraries.filter { currentSelection.includes($0.id) }.map(\.id)
+        filterStatus = "Loading available filters…"
+        filterTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let options = try await services.filterOptions(connection: connection, libraryIds: libraryIds)
+                guard !Task.isCancelled, currentProfile == connection.profile else { return }
+                filterOptions = options; filterStatus = ""
+            } catch {
+                guard !Task.isCancelled, currentProfile == connection.profile else { return }
+                filterStatus = "Available filters could not be loaded. Your saved choices are preserved."
+            }
+        }
+    }
+    func genreBinding(_ genre: String) -> Binding<Bool> {
+        Binding(get: { self.mediaFilter.genres.contains(genre) }, set: { selected in
+            self.mediaFilter.genres.removeAll { $0 == genre }; if selected { self.mediaFilter.genres.append(genre) }
+        })
+    }
+    func collectionBinding(_ collection: String) -> Binding<Bool> {
+        Binding(get: { self.mediaFilter.collections.contains(collection) }, set: { selected in
+            self.mediaFilter.collections.removeAll { $0 == collection }; if selected { self.mediaFilter.collections.append(collection) }
+        })
+    }
+    private func offlineDimensions(settings: SaverSettings) -> (width: Int, height: Int) {
+        ConfigurationDisplayDimensions.requestDimensions(settings: settings)
     }
     func copyDiagnostics() {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(diagnosticSummary, forType: .string)
     }
+}
+
+
+/// Foundation notification registration/removal is thread-safe. This immutable
+/// owner removes its opaque token without crossing a main-actor deinit boundary.
+private final class ConfigurationObserver: @unchecked Sendable {
+    private let center: NotificationCenter
+    private let token: NSObjectProtocol
+    init(center: NotificationCenter, name: Notification.Name, handler: @escaping @Sendable (Notification) -> Void) {
+        self.center = center
+        token = center.addObserver(forName: name, object: nil, queue: .main, using: handler)
+    }
+    deinit { center.removeObserver(token) }
 }

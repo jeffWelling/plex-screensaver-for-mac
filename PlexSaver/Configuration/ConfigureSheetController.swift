@@ -18,10 +18,10 @@ import os.log
     private var permitsClose = false
     private var presentationID = UUID()
     private var needsPreparation = true
-    private let makeViewModel: () -> ConfigurationViewModel
+    private let makeViewModel: @MainActor () -> ConfigurationViewModel
 
-    init(makeViewModel: @escaping () -> ConfigurationViewModel = { ConfigurationViewModel() }) {
-        self.makeViewModel = makeViewModel
+    init(makeViewModel: (@MainActor () -> ConfigurationViewModel)? = nil) {
+        self.makeViewModel = makeViewModel ?? { ConfigurationViewModel() }
         super.init()
     }
 
@@ -42,13 +42,13 @@ import os.log
         return backingWindow
     }
     private func preparePresentation() {
-        viewModel?.cancelPendingOperations()
+        viewModel?.cancelPendingOperations(); viewModel?.closeArtworkPreview()
         presentationID = UUID()
         let id = presentationID
         needsPreparation = false
         let model = makeViewModel()
         viewModel = model
-        let view = ConfigurationView(viewModel: model) { [weak self] in self?.dismissAfterApply(presentation: id) }
+        let view = ConfigurationView(viewModel: model) { [weak self] in self?.dismiss(presentation: id) }
         let host = NSHostingController(rootView: view)
         hostingController = host
         if let window = backingWindow { window.contentViewController = host }
@@ -57,15 +57,15 @@ import os.log
             window.title = "Montage Options"
             window.styleMask = [.titled, .closable, .resizable]
             window.isReleasedWhenClosed = false
-            window.setContentSize(NSSize(width: 560, height: 640))
-            window.minSize = NSSize(width: 520, height: 540)
+            window.setContentSize(NSSize(width: 620, height: 720))
+            window.minSize = NSSize(width: 560, height: 540)
             window.center(); window.delegate = self
             backingWindow = window
         }
     }
-    private func dismissAfterApply(presentation id: UUID) {
+    private func dismiss(presentation id: UUID) {
         guard id == presentationID else { return }
-        viewModel?.cancelPendingOperations()
+        viewModel?.cancelPendingOperations(); viewModel?.closeArtworkPreview()
         permitsClose = true
         if let window = backingWindow, let parent = window.sheetParent {
             parent.endSheet(window)
@@ -80,11 +80,11 @@ extension ConfigureSheetController: NSWindowDelegate {
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         if permitsClose { return true }
         let id = presentationID
-        viewModel?.apply { [weak self] in self?.dismissAfterApply(presentation: id) }
+        viewModel?.cancel { [weak self] in self?.dismiss(presentation: id) }
         return false
     }
     func windowWillClose(_ notification: Notification) {
-        viewModel?.cancelPendingOperations()
+        viewModel?.cancelPendingOperations(); viewModel?.closeArtworkPreview()
         needsPreparation = true
     }
 }

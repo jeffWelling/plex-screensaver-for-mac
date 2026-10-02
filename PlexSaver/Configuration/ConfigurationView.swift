@@ -3,15 +3,20 @@ import SwiftUI
 @MainActor struct ConfigurationView: View {
     @ObservedObject var viewModel: ConfigurationViewModel
     var onClose: (() -> Void)?
+    @State private var showsAdvanced = false
 
     var body: some View {
         VStack(spacing: 0) {
             Form {
                 Section {
-                    Picker("Media server", selection: $viewModel.providerType) {
+                    Picker("Artwork from", selection: $viewModel.providerType) {
                         ForEach(ProviderType.allCases, id: \.self) { Text($0.displayName).tag($0) }
                     }.pickerStyle(.segmented)
-                    if viewModel.providerType == .plex { plexAccount } else { jellyfinAccount }
+                    switch viewModel.providerType {
+                    case .plex: plexAccount
+                    case .jellyfin: jellyfinAccount
+                    case .local: localFolder
+                    }
                     if viewModel.isRestoring { ProgressView("Reading saved credentials…").controlSize(.small) }
                     if viewModel.usesHTTP {
                         Label("This HTTP connection sends sign-in credentials and artwork without encryption. Use an HTTPS server address where available.", systemImage: "lock.open")
@@ -20,33 +25,58 @@ import SwiftUI
                     connectionStatus
                     if !viewModel.storageMessage.isEmpty {
                         Text(viewModel.storageMessage).font(.caption).foregroundStyle(.red).textSelection(.enabled)
-                        Button("Unlock saved credentials") { viewModel.retryCredentials() }.disabled(viewModel.isRestoring)
+                        if viewModel.providerType != .local {
+                            Button("Unlock saved credentials") { viewModel.retryCredentials() }.disabled(viewModel.isRestoring)
+                        }
                     }
-                } header: { Text("Connection") }
+                } header: { Text("Artwork source") }
 
                 Section {
                     HStack {
-                        Stepper("Rows: \(viewModel.gridRows)", value: $viewModel.gridRows, in: 1...10)
-                        Stepper("Columns: \(viewModel.gridColumns)", value: $viewModel.gridColumns, in: 1...10).disabled(viewModel.gridAutoColumns)
+                        Text("Start with a style")
+                        Spacer()
+                        ForEach(PresentationPreset.allCases, id: \.self) { preset in
+                            Button(preset.displayName) { viewModel.applyPreset(preset) }
+                        }
                     }
-                    Toggle("Fit columns to each display", isOn: $viewModel.gridAutoColumns)
                     Picker("Artwork", selection: $viewModel.imageSource) {
                         ForEach(ImageSourceType.allCases, id: \.self) { Text($0.displayName).tag($0) }
                     }.pickerStyle(.segmented)
-                    layoutPreview
-                    LabeledContent("Delay between changes") {
-                        Slider(value: $viewModel.rotationInterval, in: 2...30, step: 1) { Text("Delay between changes") }
-                            .labelsHidden().accessibilityLabel("Delay between changes")
-                            .accessibilityValue("\(Int(viewModel.rotationInterval)) seconds")
-                        Text("\(Int(viewModel.rotationInterval)) s").monospacedDigit().frame(width: 40)
+                    Picker("Framing", selection: $viewModel.artworkFraming) {
+                        Text("Fill frame").tag(ArtworkFraming.fill)
+                        Text("Show full artwork").tag(ArtworkFraming.fit)
+                    }.pickerStyle(.segmented)
+                    HStack {
+                        Text("Preview your unsaved changes with real artwork.").font(.caption).foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Live Preview") { viewModel.showArtworkPreview() }.disabled(!viewModel.isConnected)
                     }
-                    Toggle("Show title before each change", isOn: $viewModel.showTitleReveal)
-                    if viewModel.showTitleReveal {
-                        LabeledContent("Title duration") {
-                            Slider(value: $viewModel.titleDisplayDuration, in: 0.5...max(0.5, viewModel.rotationInterval - 1), step: 0.5) { Text("Title duration") }
-                                .labelsHidden().accessibilityLabel("Title duration")
-                                .accessibilityValue("\(viewModel.titleDisplayDuration, specifier: "%.1f") seconds")
-                            Text("\(viewModel.titleDisplayDuration, specifier: "%.1f") s").monospacedDigit().frame(width: 45)
+                    DisclosureGroup("Advanced display controls", isExpanded: $showsAdvanced) {
+                        HStack {
+                            Stepper("Rows: \(viewModel.gridRows)", value: $viewModel.gridRows, in: 1...10)
+                            Stepper("Columns: \(viewModel.gridColumns)", value: $viewModel.gridColumns, in: 1...10).disabled(viewModel.gridAutoColumns)
+                        }
+                        Toggle("Fit columns to each display", isOn: $viewModel.gridAutoColumns)
+                        layoutPreview
+                        LabeledContent("Delay between changes") {
+                            Slider(value: $viewModel.rotationInterval, in: 2...120, step: 1) { Text("Delay between changes") }
+                                .labelsHidden().accessibilityLabel("Delay between changes")
+                                .accessibilityValue("\(Int(viewModel.rotationInterval)) seconds")
+                            Text("\(Int(viewModel.rotationInterval)) s").monospacedDigit().frame(width: 45)
+                        }
+                        LabeledContent("Fade duration") {
+                            Slider(value: $viewModel.transitionDuration, in: 0.2...3, step: 0.1) { Text("Fade duration") }
+                                .labelsHidden().accessibilityLabel("Fade duration")
+                            Text("\(viewModel.transitionDuration, specifier: "%.1f") s").monospacedDigit().frame(width: 45)
+                        }
+                        Toggle("Show title before each change", isOn: $viewModel.showTitleReveal)
+                        if viewModel.showTitleReveal {
+                            LabeledContent("Title duration") {
+                                Slider(value: $viewModel.titleDisplayDuration, in: 0.5...max(0.5, viewModel.rotationInterval - viewModel.transitionDuration), step: 0.5) { Text("Title duration") }
+                                    .labelsHidden().accessibilityLabel("Title duration")
+                                    .accessibilityValue("\(viewModel.titleDisplayDuration, specifier: "%.1f") seconds")
+                                Text("\(viewModel.titleDisplayDuration, specifier: "%.1f") s").monospacedDigit().frame(width: 45)
+                            }
                         }
                     }
                 } header: { Text("Display") }
@@ -59,19 +89,58 @@ import SwiftUI
                         }
                     } else { Text("Connect and refresh to see available libraries.").font(.caption).foregroundStyle(.secondary) }
                     if !viewModel.allLibraries && viewModel.selectedLibraryIds.isEmpty {
-                        Text("No libraries selected. Montage will show its setup message until you select a library.").font(.caption).foregroundStyle(.secondary)
+                        Text("No libraries selected. Select a library to display artwork.").font(.caption).foregroundStyle(.secondary)
                     }
-                } header: { Text("Libraries") }
+                } header: { Text(viewModel.providerType == .local ? "Folders" : "Libraries") }
+
+                if viewModel.filterCapabilities.hasFilters {
+                    Section {
+                        if viewModel.filterCapabilities.supportsFavorites { Toggle("Favorites only", isOn: $viewModel.mediaFilter.favoritesOnly) }
+                        if viewModel.filterCapabilities.supportsUnwatched { Toggle("Unwatched only", isOn: $viewModel.mediaFilter.unwatchedOnly) }
+                        if viewModel.filterCapabilities.supportsGenres {
+                            DisclosureGroup("Genres\(viewModel.mediaFilter.genres.isEmpty ? " · All" : " · \(viewModel.mediaFilter.genres.count) selected")") {
+                                ForEach(Array(Set(viewModel.filterOptions.genres + viewModel.mediaFilter.genres)).sorted(), id: \.self) { genre in
+                                    Toggle(genre, isOn: viewModel.genreBinding(genre))
+                                }
+                            }
+                        }
+                        if viewModel.filterCapabilities.supportsCollections {
+                            DisclosureGroup("Collections\(viewModel.mediaFilter.collections.isEmpty ? " · All" : " · \(viewModel.mediaFilter.collections.count) selected")") {
+                                ForEach(Array(Set(viewModel.filterOptions.collections + viewModel.mediaFilter.collections)).sorted(), id: \.self) { collection in
+                                    Toggle(collection, isOn: viewModel.collectionBinding(collection))
+                                }
+                            }
+                        }
+                        Text("Within each list, any selected choice matches. Different filters are combined.").font(.caption).foregroundStyle(.secondary)
+                        if !viewModel.filterStatus.isEmpty { Text(viewModel.filterStatus).font(.caption).foregroundStyle(.secondary) }
+                        HStack {
+                            Button("Refresh available filters") { viewModel.refreshFilterOptions() }.disabled(!viewModel.isConnected)
+                            Button("Reset filters") { viewModel.mediaFilter = MediaFilter() }
+                        }
+                    } header: { Text("Personalize selection") }
+                }
 
                 Section {
-                    Text(viewModel.cacheMessage.isEmpty ? "Artwork is cached for offline startup." : viewModel.cacheMessage).font(.caption).foregroundStyle(.secondary)
+                    Text("\(viewModel.offlineReadiness.readyTitles) titles ready for offline playback at this display size.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    if let date = viewModel.offlineReadiness.lastPreparedDate {
+                        HStack(spacing: 4) { Text("Last preparation:"); Text(date, style: .relative); Text("ago") }.font(.caption).foregroundStyle(.secondary)
+                    }
+                    Text(viewModel.cacheMessage.isEmpty ? "Cached artwork remains available when your server is offline." : viewModel.cacheMessage)
+                        .font(.caption).foregroundStyle(.secondary)
                     HStack {
-                        Button("Refresh artwork") { viewModel.refreshArtwork() }
-                        Button("Clear cache") { viewModel.clearCache() }
-                        Button("Copy diagnostics") { viewModel.copyDiagnostics() }.disabled(viewModel.diagnosticSummary.isEmpty)
-                    }.disabled(viewModel.isManagingCache)
-                    if viewModel.isManagingCache { ProgressView("Updating artwork cache…").controlSize(.small) }
-                } header: { Text("Storage and diagnostics") }
+                        Button("Prepare offline artwork") { viewModel.prepareForOffline() }.disabled(!viewModel.isConnected || viewModel.isManagingCache)
+                        Button("Refresh artwork") { viewModel.refreshArtwork() }.disabled(!viewModel.isConnected || viewModel.isManagingCache)
+                        Button("Clear cache") { viewModel.clearCache() }.disabled(viewModel.isManagingCache)
+                    }
+                    if let progress = viewModel.preparationProgress {
+                        ProgressView(value: Double(progress.completed), total: Double(max(1, progress.total)))
+                    } else if viewModel.isManagingCache { ProgressView("Updating artwork…").controlSize(.small) }
+                    if viewModel.isManagingCache { Button("Cancel preparation") { viewModel.cancelArtworkPreparation() } }
+                    if !viewModel.preparationMessage.isEmpty { Text(viewModel.preparationMessage).font(.caption).foregroundStyle(.secondary) }
+                    Text("Preparation downloads up to 200 titles per run and keeps up to 512 MB. Refresh keeps existing artwork until a replacement downloads. Clear cache removes saved images immediately.").font(.caption).foregroundStyle(.secondary)
+                    Button("Copy diagnostics") { viewModel.copyDiagnostics() }.disabled(viewModel.diagnosticSummary.isEmpty)
+                } header: { Text("Offline artwork and storage") }
             }
             .formStyle(.grouped)
             .disabled(viewModel.isApplying)
@@ -79,15 +148,23 @@ import SwiftUI
             HStack {
                 if viewModel.isApplying { ProgressView().controlSize(.small); Text("Saving…").font(.caption) }
                 Spacer()
+                Button("Cancel") { viewModel.cancel { onClose?() } }
+                    .keyboardShortcut(.cancelAction).disabled(viewModel.isApplying)
                 Button("Apply and Close") { viewModel.apply { onClose?() } }
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(viewModel.isApplying)
+                    .keyboardShortcut(.defaultAction).disabled(viewModel.isApplying)
             }.padding(12)
         }
-        .frame(minWidth: 520, idealWidth: 560, minHeight: 520, idealHeight: 640)
+        .frame(minWidth: 560, idealWidth: 620, minHeight: 520, idealHeight: 720)
         .onAppear { viewModel.refreshDiagnostics() }
-        .onDisappear { viewModel.cancelPendingOperations() }
-        .onChange(of: viewModel.rotationInterval) { _, interval in viewModel.titleDisplayDuration = min(viewModel.titleDisplayDuration, interval - 1) }
+        .onDisappear { viewModel.cancelPendingOperations(); viewModel.closeArtworkPreview() }
+        .onChange(of: viewModel.draftSettings) { _, _ in
+            viewModel.updateArtworkPreview(); viewModel.refreshDiagnostics()
+        }
+        .onChange(of: viewModel.currentSelection) { _, _ in viewModel.refreshFilterOptions() }
+        .onChange(of: viewModel.rotationInterval) { _, interval in
+            viewModel.titleDisplayDuration = min(viewModel.titleDisplayDuration, max(0.5, interval - viewModel.transitionDuration))
+            viewModel.transitionDuration = min(viewModel.transitionDuration, interval - 0.5)
+        }
     }
     private var connectionStatus: some View {
         HStack {
@@ -95,6 +172,13 @@ import SwiftUI
             Text(viewModel.testMessage).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
             Spacer()
             Button("Test / Refresh") { viewModel.testConnection() }.disabled(viewModel.isTesting || !viewModel.isConnected || viewModel.isManagingCache)
+        }
+    }
+    private var localFolder: some View {
+        HStack {
+            Text(viewModel.localFolderName.isEmpty ? "Choose a folder of artwork." : viewModel.localFolderName).textSelection(.enabled)
+            Spacer()
+            Button(viewModel.localFolderBookmark == nil ? "Choose folder…" : "Change folder…") { viewModel.chooseLocalFolder() }
         }
     }
     private var plexAccount: some View {
@@ -133,7 +217,7 @@ import SwiftUI
                         .disabled(viewModel.isJellyfinConnecting || viewModel.jellyfinServerURL.isEmpty || viewModel.jellyfinUsername.isEmpty || viewModel.jellyfinPassword.isEmpty)
                     if viewModel.isJellyfinConnecting {
                         ProgressView().controlSize(.small)
-                        Button("Cancel") { viewModel.cancelPendingOperations() }
+                        Button("Cancel connection") { viewModel.cancelPendingOperations() }
                     }
                 }
             }
