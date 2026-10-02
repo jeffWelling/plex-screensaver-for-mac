@@ -1,60 +1,73 @@
 import AppKit
+import SwiftUI
 
-/// The remote screensaver host may remove window chrome from auxiliary views.
-/// Keep preview keyboard focus and an Escape close action in that form.
-@MainActor final class ArtworkPreviewWindow: NSWindow {
-    override var canBecomeKey: Bool { true }
-    override func cancelOperation(_ sender: Any?) { close() }
+/// Embeds actual draft playback in the remotely hosted Options content. The
+/// screensaver host forwards this view with the rest of the sheet's controls.
+@MainActor struct ArtworkPreviewView: NSViewRepresentable {
+    let settings: SaverSettings
+    let connection: ConnectionSnapshot
+
+    func makeCoordinator() -> ArtworkPreviewController { ArtworkPreviewController() }
+    func makeNSView(context: Context) -> NSView {
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 560, height: 280))
+        container.wantsLayer = true
+        container.layer?.backgroundColor = NSColor.black.cgColor
+        context.coordinator.mount(in: container, settings: settings, connection: connection)
+        return container
+    }
+    func updateNSView(_ view: NSView, context: Context) {
+        context.coordinator.update(settings: settings, connection: connection)
+    }
+    static func dismantleNSView(_ view: NSView, coordinator: ArtworkPreviewController) {
+        coordinator.stop()
+    }
 }
 
-/// A separate preview uses draft settings and in-memory credentials, never
-/// saves preferences, and stops the renderer before its window disappears.
-@MainActor final class ArtworkPreviewController: NSObject, NSWindowDelegate {
-    private(set) var window: NSWindow?
-    private var saverView: MontageView?
+/// Owns a mounted renderer and coalesces edits without saving preferences,
+/// touching credentials, or creating a helper-process window.
+@MainActor final class ArtworkPreviewController {
+    private(set) var saverView: MontageView?
     private var updateTask: Task<Void, Never>?
+    private var lastSettings: SaverSettings?
+    private var lastConnection: ConnectionSnapshot?
     private let makeView: @MainActor (NSRect) -> MontageView?
 
     init(makeView: (@MainActor (NSRect) -> MontageView?)? = nil) {
         self.makeView = makeView ?? { MontageView(frame: $0, isPreview: true) }
     }
     deinit { updateTask?.cancel() }
-    func show(settings: SaverSettings, connection: ConnectionSnapshot) {
-        if window == nil {
-            let rectangle = NSRect(x: 0, y: 0, width: 960, height: 540)
-            guard let view = makeView(rectangle) else { return }
-            view.autoresizingMask = [.width, .height]
-            let preview = ArtworkPreviewWindow(contentRect: rectangle, styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
-            preview.title = "Montage Preview — Unsaved Changes"
-            preview.isReleasedWhenClosed = false; preview.contentView = view
-            preview.minSize = NSSize(width: 480, height: 300); preview.delegate = self; preview.center()
-            saverView = view; window = preview
-        }
-        updateTask?.cancel(); updateTask = nil
-        saverView?.configurePreview(settings: settings, connection: connection)
-        saverView?.startAnimation()
-        window?.makeKeyAndOrderFront(nil)
+    func mount(in container: NSView, settings: SaverSettings, connection: ConnectionSnapshot) {
+        stop()
+        guard let view = makeView(container.bounds) else { return }
+        view.autoresizingMask = [.width, .height]
+        container.addSubview(view)
+        saverView = view; lastSettings = settings; lastConnection = connection
+        view.configurePreview(settings: settings, connection: connection)
+        view.startAnimation()
     }
     func update(settings: SaverSettings, connection: ConnectionSnapshot) {
-        guard saverView != nil else { return }
+        guard saverView != nil, lastSettings != settings || !sameConnection(connection) else { return }
+        lastSettings = settings; lastConnection = connection
         updateTask?.cancel()
         updateTask = Task { [weak self] in
             do { try await Task.sleep(nanoseconds: 200_000_000) } catch { return }
-            guard let self, !Task.isCancelled, self.window?.isVisible == true else { return }
+            guard let self, !Task.isCancelled else { return }
             self.saverView?.configurePreview(settings: settings, connection: connection)
             self.updateTask = nil
         }
     }
-    func close() {
+    func stop() {
         updateTask?.cancel(); updateTask = nil
         saverView?.stopAnimation()
-        window?.orderOut(nil)
-        window?.close()
-        saverView = nil; window = nil
+        saverView?.removeFromSuperview()
+        saverView = nil; lastSettings = nil; lastConnection = nil
     }
-    func windowWillClose(_ notification: Notification) {
-        updateTask?.cancel(); updateTask = nil
-        saverView?.stopAnimation()
-        saverView = nil; window = nil
+    private func sameConnection(_ connection: ConnectionSnapshot) -> Bool {
+        guard let previous = lastConnection else { return false }
+        return previous.provider == connection.provider && previous.serverURL == connection.serverURL
+            && previous.token == connection.token && previous.userID == connection.userID
+            && previous.accountID == connection.accountID && previous.serverID == connection.serverID
+            && previous.fallbackURLs == connection.fallbackURLs
+            && previous.localFolderBookmark == connection.localFolderBookmark
     }
 }

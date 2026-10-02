@@ -105,6 +105,7 @@ private struct StagedJellyfinConnection {
     @Published var connectionState: ConfigurationConnectionState = .idle
     @Published var storageMessage = ""
     @Published var isApplying = false
+    @Published var isPreviewing = false
     @Published var isRestoring = false
     @Published var diagnosticSummary = ""
     @Published var cacheMessage = ""
@@ -146,7 +147,6 @@ private struct StagedJellyfinConnection {
     private let credentials: any ConfigurationCredentials
     private let artworkPreparation: any OfflineArtworkPreparing
     private var filterTask: Task<Void, Never>?
-    private var previewController: ArtworkPreviewController?
     private var folderPanel: NSOpenPanel?
     private var workspaceObserver: ConfigurationObserver?
     private var thermalObserver: ConfigurationObserver?
@@ -612,12 +612,10 @@ private struct StagedJellyfinConnection {
         refreshDiagnostics()
     }
     func showArtworkPreview() {
-        guard isConnected else { return }
-        if previewController == nil { previewController = ArtworkPreviewController() }
-        previewController?.show(settings: draftSettings, connection: currentConnection)
+        guard isConnected || isPreviewing else { return }
+        isPreviewing.toggle()
     }
-    func updateArtworkPreview() { previewController?.update(settings: draftSettings, connection: currentConnection) }
-    func closeArtworkPreview() { previewController?.close(); previewController = nil }
+    func closeArtworkPreview() { isPreviewing = false }
     func chooseLocalFolder() {
         guard folderPanel == nil else { folderPanel?.makeKeyAndOrderFront(nil); return }
         let panel = ArtworkFolderOpenPanel()

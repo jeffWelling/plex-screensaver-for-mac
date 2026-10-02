@@ -49,7 +49,13 @@ import SwiftUI
                     HStack {
                         Text("Preview your unsaved changes with real artwork.").font(.caption).foregroundStyle(.secondary)
                         Spacer()
-                        Button("Live Preview") { viewModel.showArtworkPreview() }.disabled(!viewModel.isConnected)
+                        Button(viewModel.isPreviewing ? "Hide preview" : "Show live preview") { viewModel.showArtworkPreview() }
+                            .disabled(!viewModel.isConnected && !viewModel.isPreviewing)
+                    }
+                    if viewModel.isPreviewing {
+                        ArtworkPreviewView(settings: viewModel.draftSettings, connection: viewModel.currentConnection)
+                            .frame(maxWidth: .infinity).frame(height: 280)
+                            .accessibilityLabel("Live artwork preview using unsaved display settings")
                     }
                     DisclosureGroup("Advanced display controls", isExpanded: $showsAdvanced) {
                         HStack {
@@ -158,7 +164,7 @@ import SwiftUI
         .onAppear { viewModel.refreshDiagnostics() }
         .onDisappear { viewModel.cancelPendingOperations(); viewModel.closeArtworkPreview() }
         .onChange(of: viewModel.draftSettings) { _, _ in
-            viewModel.updateArtworkPreview(); viewModel.refreshDiagnostics()
+            viewModel.refreshDiagnostics()
         }
         .onChange(of: viewModel.currentSelection) { _, _ in viewModel.refreshFilterOptions() }
         .onChange(of: viewModel.transitionDuration) { _, duration in

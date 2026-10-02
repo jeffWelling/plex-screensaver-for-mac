@@ -107,19 +107,23 @@ private actor OptionsPreparation: OfflineArtworkPreparing {
         await preparation.finish()
         model.cancelPendingOperations()
     }
-    func testPreviewWindowUsesDraftAndStopsWhenClosed() throws {
-        _ = NSApplication.shared
+    func testEmbeddedPreviewUsesDraftAndStopsWhenDismantled() throws {
         let before = NSDictionary(dictionary: Preferences.defaults.dictionaryRepresentation())
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 560, height: 280))
         let controller = ArtworkPreviewController()
         let settings = SaverSettings(rows: 1, columns: 1, autoColumns: false, rotationInterval: 60, imageSource: .fanart,
             showTitleReveal: false, titleDisplayDuration: 2, librarySelection: .selected([]), artworkFraming: .fit)
         let connection = ConnectionSnapshot(provider: .plex, serverURL: "", token: "", userID: "", accountID: "preview-test")
-        controller.show(settings: settings, connection: connection)
-        let window = try XCTUnwrap(controller.window), view = try XCTUnwrap(window.contentView as? MontageView)
+        controller.mount(in: container, settings: settings, connection: connection)
+        let view = try XCTUnwrap(controller.saverView)
+        XCTAssertTrue(view.superview === container)
         XCTAssertTrue(view.isAnimating)
-        controller.close()
+        XCTAssertEqual(view.frame, container.bounds)
+        ArtworkPreviewView.dismantleNSView(container, coordinator: controller)
         XCTAssertFalse(view.isAnimating)
-        XCTAssertNil(controller.window)
+        XCTAssertNil(view.superview)
+        XCTAssertNil(controller.saverView)
+        XCTAssertTrue(container.subviews.isEmpty)
         XCTAssertEqual(before, NSDictionary(dictionary: Preferences.defaults.dictionaryRepresentation()))
     }
     func testCancelDiscardsStagedLocalFolderBookmark() async throws {
@@ -138,28 +142,37 @@ private actor OptionsPreparation: OfflineArtworkPreparing {
         XCTAssertEqual(before, NSDictionary(dictionary: Preferences.defaults.dictionaryRepresentation()))
     }
 
-    func testRemoteHostBorderlessPreviewKeepsFocusAndEscapeStopsRenderer() throws {
-        _ = NSApplication.shared
+    func testEmbeddedPreviewCanRemountAndRejectPendingUpdatesAfterStop() async throws {
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 560, height: 280))
         let controller = ArtworkPreviewController()
         let settings = SaverSettings(rows: 1, columns: 1, autoColumns: false, rotationInterval: 60,
             imageSource: .fanart, showTitleReveal: false, titleDisplayDuration: 2, librarySelection: .selected([]))
-        let connection = ConnectionSnapshot(provider: .plex, serverURL: "", token: "", userID: "", accountID: "borderless-preview")
-        controller.show(settings: settings, connection: connection)
-        let window = try XCTUnwrap(controller.window as? ArtworkPreviewWindow)
-        let view = try XCTUnwrap(window.contentView as? MontageView)
-        window.styleMask = .borderless
-        XCTAssertTrue(window.canBecomeKey, "Apple's remote host removes title chrome; the live preview must retain keyboard focus")
-        XCTAssertTrue(view.isAnimating)
-        window.cancelOperation(nil)
-        XCTAssertFalse(view.isAnimating)
-        XCTAssertNil(controller.window)
-        controller.show(settings: settings, connection: connection)
-        let reopened = try XCTUnwrap(controller.window)
-        XCTAssertFalse(window === reopened)
-        XCTAssertTrue(reopened.canBecomeKey)
-        controller.close()
+        let connection = ConnectionSnapshot(provider: .plex, serverURL: "", token: "", userID: "", accountID: "embedded-preview")
+        controller.mount(in: container, settings: settings, connection: connection)
+        let original = try XCTUnwrap(controller.saverView)
+        controller.update(settings: settings.applying(.posterWall), connection: connection)
+        controller.stop()
+        try await Task.sleep(nanoseconds: 250_000_000)
+        XCTAssertFalse(original.isAnimating)
+        XCTAssertNil(controller.saverView)
+        XCTAssertTrue(container.subviews.isEmpty)
+        controller.mount(in: container, settings: settings, connection: connection)
+        let reopened = try XCTUnwrap(controller.saverView)
+        XCTAssertFalse(original === reopened)
+        XCTAssertTrue(reopened.isAnimating)
+        XCTAssertEqual(container.subviews.count, 1)
+        controller.stop()
     }
-
+    func testCancelHidesEmbeddedPreviewWithoutSaving() {
+        let model = ConfigurationViewModel(services: EmptyOptionsServices(), credentials: OptionsCredentials(), restoreCredentials: false)
+        model.plexToken = "fixture"; model.isSignedIn = true
+        let before = NSDictionary(dictionary: Preferences.defaults.dictionaryRepresentation())
+        model.showArtworkPreview()
+        XCTAssertTrue(model.isPreviewing)
+        model.cancel {}
+        XCTAssertFalse(model.isPreviewing)
+        XCTAssertEqual(before, NSDictionary(dictionary: Preferences.defaults.dictionaryRepresentation()))
+    }
     func testRemoteHostFolderChooserKeepsKeyboardFocusWithoutWindowChrome() {
         _ = NSApplication.shared
         let panel = ArtworkFolderOpenPanel()
