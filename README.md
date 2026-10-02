@@ -33,7 +33,9 @@ make install
 
 `make build` performs an incremental universal Release build in `build/xcode`. Installation validates the exact bundle, verifies the staged copy, and replaces `~/Library/Screen Savers/Montage.saver`. A previous stable installation is retained as the hidden `.Montage-backups/Previous.saver` recovery copy. Older versioned Montage bundles are removed only when their bundle identifier matches Montage and the replacement has been installed successfully. Reopen System Settings after an update.
 
-`make version` reports source and installed versions. `make uninstall` removes only identified Montage bundles. Local builds are unsigned by default; they are distinct from signed distribution releases.
+The source installer also installs **Montage Options.app** in `~/Applications`; open it to configure the installed screensaver in a regular window. It uses the same saved connection, libraries, and display settings. Changes take effect on the next screensaver start; reselect Montage to refresh an already running Settings preview.
+
+`make version` reports source and installed versions. `make uninstall` removes only identified Montage screensaver and Options app bundles. Local builds are unsigned by default; they are distinct from signed distribution releases.
 
 ## Configuration
 
@@ -104,9 +106,9 @@ Tests cover lifecycle cancellation, reservation ownership, cache coordination an
 
 ## Release validation
 
-`Version.xcconfig` holds the shared marketing version and build number for both targets. `make bump-patch`, `make bump-minor`, and `make bump-major` update it consistently.
+`Version.xcconfig` holds the shared marketing version and build number for the screensaver, Options companion, and development targets. `make bump-patch`, `make bump-minor`, and `make bump-major` update it consistently.
 
-CI builds a universal Release screensaver, verifies both architectures, builds SaverTest, and runs tests with complete Swift concurrency checking on macOS 15 and 26. CI retains a clearly labelled unsigned artifact.
+CI builds a universal Release screensaver, verifies both architectures for the screensaver and Options app, builds SaverTest, and runs tests with complete Swift concurrency checking on macOS 15 and 26. CI retains clearly labelled unsigned screensaver and Options artifacts.
 
 Signed distribution requires a Developer ID Application identity and an existing `notarytool` Keychain profile:
 
@@ -116,11 +118,12 @@ NOTARY_PROFILE="your-notary-profile" \
 make release
 ```
 
-This explicit release command signs with hardened runtime, submits to Apple's notarization service, staples the accepted ticket, and produces `build/release/Montage.saver.zip`. No credentials are embedded in repository files.
+This explicit release command signs both bundles with the same Developer ID identity and hardened runtime, submits them together to Apple's notarization service, staples both accepted tickets, and produces `build/release/Montage.saver.zip` and `build/release/Montage.Options.zip`. Extract the Options archive and place **Montage Options.app** in `~/Applications` to use it with the installed screensaver. No credentials are embedded in repository files.
 
 Before distributing a release, check real host behavior on both supported macOS generations:
 
-- System Settings thumbnail and full preview; Options sheet opening, applying, and reopening.
+- System Settings thumbnail and full preview; Options sheet opening, applying, and reopening after quitting Settings, tested with a physical click.
+- Montage Options companion: saved connection restoration, Apply/relaunch, unsaved Cancel, window close/Quit, and missing-bundle errors. Source-window logs or accessibility-triggered opening alone do not establish that Settings displays the remote sheet.
 - Screensaver activation, lock/unlock, and immediate stop/start or re-entry.
 - One and multiple monitors, Retina/non-Retina scale changes, and display resizing.
 - Small and empty libraries, offline startup, server recovery, and expired credentials.
@@ -144,7 +147,7 @@ Automated builds and SaverTest complement these checks; they do not establish co
 
 **Montage does not appear in System Settings:** Confirm `Montage.saver` exists in `~/Library/Screen Savers/` and reopen System Settings. On current macOS, choose Wallpaper → Screen Saver… → Custom → Other → Show All, then scroll to Montage. Automatic hides the custom gallery. Avoid installing multiple copies of the same screensaver.
 
-**Options does not open after an update:** Close the screensaver picker with Done, quit System Settings, and reopen it so the remote screensaver host loads the updated bundle.
+**Options does not open in System Settings:** Open **Montage Options.app** in your user Applications folder. On macOS 27.0.1 we observed Apple’s newly launched `legacyScreenSaver` host crash before Montage loaded, and another host create a source sheet without displaying it in Settings. Closing and reopening Settings did not reliably resolve it. The companion opens the installed saver’s own Options form without remote embedding; this is a fallback, and the native Settings button remains an unresolved compatibility issue. If saved credentials cannot be read by the new app, use **Unlock saved credentials** and respond to macOS’s authorization prompt yourself. Reopen the companion after installing a new saver version.
 
 ## License
 

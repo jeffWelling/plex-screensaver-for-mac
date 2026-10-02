@@ -13,6 +13,7 @@
 		AA0000062E353CD900C4EA3C /* MontageTestApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000072E353CD900C4EA3C /* MontageTestApp.swift */; };
 		AA0000082E353CD900C4EA3C /* MontageTestContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000092E353CD900C4EA3C /* MontageTestContentView.swift */; };
 		AA00000A1DC38B790019C16F /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AA00000B1DC38B790019C16F /* Assets.xcassets */; };
+		AB0000010000000000000001 /* MontageOptionsApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000020000000000000001; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -26,6 +27,9 @@
 		AA0000111DC38B790019C16F /* SaverTest.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SaverTest.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		AA0000121B644145008A2D6A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		AA0000131DC38B790019C16F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		AB0000020000000000000001 /* MontageOptionsApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MontageOptionsApp.swift; sourceTree = "<group>"; };
+		AB0000030000000000000001 /* Montage Options.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Montage Options.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		AB0000040000000000000001 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -54,6 +58,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		AB0000060000000000000001 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -62,6 +67,7 @@
 			children = (
 				CC0000021B644145008A2D6A /* PlexSaver */,
 				CC0000031DC38B790019C16F /* SaverTest */,
+                AB0000050000000000000001 /* MontageOptions */,
 				CC0000041B644145008A2D6A /* Products */,
 				AA0000141DC38B790019C16F /* Version.xcconfig */,
 			);
@@ -101,6 +107,7 @@
 			children = (
 				AA0000101B644145008A2D6A /* PlexSaver.saver */,
 				AA0000111DC38B790019C16F /* SaverTest.app */,
+                AB0000030000000000000001 /* Montage Options.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -113,6 +120,12 @@
 			name = "Supporting Files";
 			sourceTree = "<group>";
 		};
+		AB0000050000000000000001 /* MontageOptions */ = {
+            isa = PBXGroup;
+            children = (AB0000020000000000000001, AB0000040000000000000001);
+            path = MontageOptions;
+            sourceTree = "<group>";
+        };
 /* End PBXGroup section */
 
 /* Begin PBXHeadersBuildPhase section */
@@ -180,6 +193,15 @@
 			productReference = AA0000111DC38B790019C16F /* SaverTest.app */;
 			productType = "com.apple.product-type.application";
 		};
+		AB0000090000000000000001 /* MontageOptions */ = {
+            isa = PBXNativeTarget;
+            buildConfigurationList = AB00000A0000000000000001;
+            buildPhases = (AB0000070000000000000001, AB0000060000000000000001, AB0000080000000000000001);
+            buildRules = (); dependencies = ();
+            name = MontageOptions; productName = "Montage Options";
+            productReference = AB0000030000000000000001;
+            productType = "com.apple.product-type.application";
+        };
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -216,6 +238,7 @@
 			targets = (
 				EE0000011B644145008A2D6A /* PlexSaver */,
 				EE0000021DC38B790019C16F /* SaverTest */,
+                AB0000090000000000000001 /* MontageOptions */,
 			);
 		};
 /* End PBXProject section */
@@ -236,6 +259,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		AB0000080000000000000001 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -258,6 +282,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		AB0000070000000000000001 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (AB0000010000000000000001); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */
@@ -476,6 +501,36 @@
 			};
 			name = Release;
 		};
+        AB00000B0000000000000001 /* Debug */ = {
+            isa = XCBuildConfiguration;
+            baseConfigurationReference = AA0000141DC38B790019C16F;
+            buildSettings = {
+                CODE_SIGN_IDENTITY = "-";
+                INFOPLIST_FILE = MontageOptions/Info.plist;
+                MACOSX_DEPLOYMENT_TARGET = 15.0;
+                PRODUCT_BUNDLE_IDENTIFIER = com.montage.Options;
+                PRODUCT_NAME = "Montage Options";
+                SWIFT_VERSION = 5.0;
+                SWIFT_STRICT_CONCURRENCY = complete;
+                LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/../Frameworks");
+            };
+            name = Debug;
+        };
+        AB00000C0000000000000001 /* Release */ = {
+            isa = XCBuildConfiguration;
+            baseConfigurationReference = AA0000141DC38B790019C16F;
+            buildSettings = {
+                CODE_SIGN_IDENTITY = "-";
+                INFOPLIST_FILE = MontageOptions/Info.plist;
+                MACOSX_DEPLOYMENT_TARGET = 15.0;
+                PRODUCT_BUNDLE_IDENTIFIER = com.montage.Options;
+                PRODUCT_NAME = "Montage Options";
+                SWIFT_VERSION = 5.0;
+                SWIFT_STRICT_CONCURRENCY = complete;
+                LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/../Frameworks");
+            };
+            name = Release;
+        };
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -506,6 +561,11 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
+        AB00000A0000000000000001 = {
+            isa = XCConfigurationList;
+            buildConfigurations = (AB00000B0000000000000001, AB00000C0000000000000001);
+            defaultConfigurationIsVisible = 0; defaultConfigurationName = Release;
+        };
 /* End XCConfigurationList section */
 	};
 	rootObject = CC0000061B644145008A2D6A /* Project object */;

@@ -30,20 +30,19 @@ jobs:
           swift --version
       - name: Unit and fixture tests with complete concurrency checking
         run: make test
-      - name: Build universal Release screensaver
+      - name: Build matching universal Release screensaver and Options app
         run: make build validate
       - name: Build development app
         run: make build SCHEME=SaverTest CONFIG=Debug
-      - name: Package validated unsigned artifact
+      - name: Package validated unsigned artifacts
         if: matrix.os == 'macos-26'
-        run: |
-          mkdir -p build/release
-          ditto build/xcode/Build/Products/Release/PlexSaver.saver build/release/Montage.saver
-          ditto -c -k --sequesterRsrc --keepParent build/release/Montage.saver build/release/Montage.saver.zip
-      - name: Save Release artifact
+        run: make archive
+      - name: Save Release artifacts
         if: matrix.os == 'macos-26'
         uses: actions/upload-artifact@v4
         with:
           name: Montage-universal-unsigned
-          path: build/release/Montage.saver.zip
+          path: |
+            build/release/Montage.saver.zip
+            build/release/Montage.Options.zip
           if-no-files-found: error
