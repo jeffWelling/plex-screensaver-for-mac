@@ -120,7 +120,8 @@ def install(source, directory):
         print(f"Installed Montage {info['CFBundleShortVersionString']} (build {info['CFBundleVersion']}) at {target}")
         if has_previous:
             print(f"Previous installation retained at {previous}")
-        print("Reopen System Settings to load the updated bundle.")
+        print("Close the screensaver picker with Done, quit System Settings, and reopen it to load the updated bundle.")
+        print("On current macOS: Wallpaper → Screen Saver… → Custom → Other → Show All → Montage → Options…")
     finally:
         if stage.exists():
             shutil.rmtree(stage)

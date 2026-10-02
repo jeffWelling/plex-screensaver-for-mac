@@ -1,5 +1,15 @@
 import Cocoa
 import SwiftUI
+import os.log
+
+/// The screensaver host can remove the title style while embedding a sheet.
+/// Options still needs keyboard focus for its controls in that borderless form.
+@MainActor final class ConfigureSheetWindow: NSWindow {
+    override var canBecomeKey: Bool {
+        OSLog.metric("options.window.style", value: Int(styleMask.rawValue))
+        return true
+    }
+}
 
 @MainActor final class ConfigureSheetController: NSObject {
     private var backingWindow: NSWindow?
@@ -7,26 +17,43 @@ import SwiftUI
     private var hostingController: NSHostingController<ConfigurationView>?
     private var permitsClose = false
     private var presentationID = UUID()
+    private var needsPreparation = true
+    private let makeViewModel: () -> ConfigurationViewModel
 
-    /// System Settings can reuse the controller across sheet presentations.
-    /// Rebuild a hidden sheet so reopening restores saved settings and starts
-    /// fresh cancellable library discovery instead of retaining old UI state.
+    init(makeViewModel: @escaping () -> ConfigurationViewModel = { ConfigurationViewModel() }) {
+        self.makeViewModel = makeViewModel
+        super.init()
+    }
+
+    /// Remote hosts can request the hidden source window repeatedly before
+    /// displaying it. Keep its content stable until an actual dismissal; the
+    /// next presentation then restores saved settings with fresh discovery.
     var window: NSWindow? {
-        if backingWindow?.isVisible != true && viewModel?.isApplying != true { preparePresentation() }
+        if needsPreparation && backingWindow?.sheetParent == nil && backingWindow?.isVisible != true
+            && viewModel?.isApplying != true { preparePresentation() }
+        if let window = backingWindow {
+            OSLog.event("options.requested")
+            OSLog.metric("options.window.number", value: window.windowNumber)
+            OSLog.metric("options.window.width", value: Int(window.frame.width))
+            OSLog.metric("options.window.height", value: Int(window.frame.height))
+            OSLog.metric("options.content.width", value: Int(window.contentView?.frame.width ?? 0))
+            OSLog.metric("options.content.height", value: Int(window.contentView?.frame.height ?? 0))
+        }
         return backingWindow
     }
     private func preparePresentation() {
         viewModel?.cancelPendingOperations()
         presentationID = UUID()
         let id = presentationID
-        let model = ConfigurationViewModel()
+        needsPreparation = false
+        let model = makeViewModel()
         viewModel = model
         let view = ConfigurationView(viewModel: model) { [weak self] in self?.dismissAfterApply(presentation: id) }
         let host = NSHostingController(rootView: view)
         hostingController = host
         if let window = backingWindow { window.contentViewController = host }
         else {
-            let window = NSWindow(contentViewController: host)
+            let window = ConfigureSheetWindow(contentViewController: host)
             window.title = "Montage Options"
             window.styleMask = [.titled, .closable, .resizable]
             window.isReleasedWhenClosed = false
@@ -45,6 +72,7 @@ import SwiftUI
             window.orderOut(nil)
         } else { backingWindow?.close() }
         permitsClose = false
+        needsPreparation = true
     }
 }
 
@@ -55,5 +83,8 @@ extension ConfigureSheetController: NSWindowDelegate {
         viewModel?.apply { [weak self] in self?.dismissAfterApply(presentation: id) }
         return false
     }
-    func windowWillClose(_ notification: Notification) { viewModel?.cancelPendingOperations() }
+    func windowWillClose(_ notification: Notification) {
+        viewModel?.cancelPendingOperations()
+        needsPreparation = true
+    }
 }

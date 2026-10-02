@@ -16,7 +16,7 @@ Montage is a macOS screensaver that displays a rotating mosaic of artwork from P
 
 ## Installation
 
-Download and unzip `Montage.saver.zip` from [Releases](https://github.com/jeffWelling/plex-screensaver-for-mac/releases), then double-click `Montage.saver`. Select Montage in **System Settings → Screen Saver** and open **Options…** to connect your server.
+Download and unzip `Montage.saver.zip` from [Releases](https://github.com/jeffWelling/plex-screensaver-for-mac/releases), then double-click `Montage.saver`. On current macOS, open **System Settings → Wallpaper → Screen Saver… → Custom**, expand **Other → Show All**, scroll down and select **Montage**, then open **Options…** to connect your server. On macOS 15, use the **Screen Saver** settings pane.
 
 ### Build from source
 
@@ -122,7 +122,9 @@ Automated builds and SaverTest complement these checks; they do not establish co
 
 **Unexpected artwork or cache size:** Use the current connection's Clear Cache or Refresh Artwork controls. Copy Diagnostics provides versions and aggregate status without credentials, addresses, or media titles.
 
-**Montage does not appear in System Settings:** Confirm `Montage.saver` exists in `~/Library/Screen Savers/` and reopen System Settings. Avoid installing multiple copies of the same screensaver.
+**Montage does not appear in System Settings:** Confirm `Montage.saver` exists in `~/Library/Screen Savers/` and reopen System Settings. On current macOS, choose Wallpaper → Screen Saver… → Custom → Other → Show All, then scroll to Montage. Automatic hides the custom gallery. Avoid installing multiple copies of the same screensaver.
+
+**Options does not open after an update:** Close the screensaver picker with Done, quit System Settings, and reopen it so the remote screensaver host loads the updated bundle.
 
 ## License
 
