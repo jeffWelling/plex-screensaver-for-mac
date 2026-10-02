@@ -50,7 +50,7 @@ make install
 
 Choose **Mosaic**, **Poster Wall**, or **Calm** for a presentation preset. Presets retain the connection, selected libraries, and content filters. Expand Advanced for individual layout, timing, and title controls. Both artwork chooses backgrounds for wide cells and posters for tall cells, falling back to another available image when needed.
 
-**Live Preview** shows the actual screensaver inside Options using the draft connection and display choices. It does not save preferences or credentials, or contribute to the installed screensaver's recent-title history. Hide the preview when finished; applying or canceling stops it automatically.
+**Show live preview** shows the actual screensaver inside Options using the draft connection and display choices. It does not save preferences or credentials, or contribute to the installed screensaver's recent-title history. Hide the preview when finished; applying or canceling stops it automatically.
 
 Changes are saved together through **Apply and Close**. **Cancel**, Escape, and closing the Options window discard unsaved display and connection changes. Sign-out and disconnect are staged until Apply. Cache-management actions are separate operations; Cancel does not undo artwork already downloaded or deliberately cleared.
 
