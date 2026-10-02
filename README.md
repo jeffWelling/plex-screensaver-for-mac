@@ -18,7 +18,7 @@ Montage is a macOS screensaver that displays a rotating mosaic of artwork from P
 
 ## Installation
 
-Download and unzip `Montage.saver.zip` from [Releases](https://github.com/jeffWelling/plex-screensaver-for-mac/releases), then double-click `Montage.saver`. On current macOS, open **System Settings → Wallpaper → Screen Saver… → Custom**, expand **Other → Show All**, scroll down and select **Montage**, then open **Options…** to connect your server. On macOS 15, use the **Screen Saver** settings pane.
+Download and unzip `Montage.saver.zip` from [Releases](https://github.com/jeffWelling/plex-screensaver-for-mac/releases), then double-click `Montage v<version>.saver`. On current macOS, open **System Settings → Wallpaper → Screen Saver… → Custom**, expand **Other → Show All**, scroll down and select **Montage v<version>**, then open **Options…** to connect your server. On macOS 15, use the **Screen Saver** settings pane.
 
 ### Build from source
 
@@ -31,7 +31,7 @@ make test
 make install
 ```
 
-`make build` performs an incremental universal Release build in `build/xcode`. Installation validates the exact bundle, verifies the staged copy, and replaces `~/Library/Screen Savers/Montage.saver`. A previous stable installation is retained as the hidden `.Montage-backups/Previous.saver` recovery copy. Older versioned Montage bundles are removed only when their bundle identifier matches Montage and the replacement has been installed successfully. Reopen System Settings after an update.
+`make build` performs an incremental universal Release build in `build/xcode`. Installation validates the exact bundle, verifies the staged copy, and installs `~/Library/Screen Savers/Montage v<version>.saver`. The filename and bundle display name include the release version so System Settings identifies the selected build. A previous installation is retained as the hidden `.Montage-backups/Previous.saver` recovery copy. Older stable and versioned Montage bundles are removed only when their bundle identifier matches Montage and the replacement has been installed successfully. Reopen System Settings after an update.
 
 The source installer also installs **Montage Options.app** in `~/Applications`; open it to configure the installed screensaver in a regular window. It uses the same saved connection, libraries, and display settings. Changes take effect on the next screensaver start; reselect Montage to refresh an already running Settings preview.
 
@@ -145,7 +145,7 @@ Automated builds and SaverTest complement these checks; they do not establish co
 
 **Unexpected artwork or cache size:** Check the selected libraries and filters, use Refresh artwork to update the catalog, or deliberately Clear cache. Copy Diagnostics provides versions and aggregate status without credentials, addresses, or media titles.
 
-**Montage does not appear in System Settings:** Confirm `Montage.saver` exists in `~/Library/Screen Savers/` and reopen System Settings. On current macOS, choose Wallpaper → Screen Saver… → Custom → Other → Show All, then scroll to Montage. Automatic hides the custom gallery. Avoid installing multiple copies of the same screensaver.
+**Montage does not appear in System Settings:** Confirm `Montage v<version>.saver` exists in `~/Library/Screen Savers/` and reopen System Settings. On current macOS, choose Wallpaper → Screen Saver… → Custom → Other → Show All, then scroll to Montage’s versioned display name. Automatic hides the custom gallery. Avoid installing multiple copies of the same screensaver.
 
 **Options does not open in System Settings:** Open **Montage Options.app** in your user Applications folder. On macOS 27.0.1 we observed Apple’s newly launched `legacyScreenSaver` host crash before Montage loaded, and another host create a source sheet without displaying it in Settings. Closing and reopening Settings did not reliably resolve it. The companion opens the installed saver’s own Options form without remote embedding; this is a fallback, and the native Settings button remains an unresolved compatibility issue. If saved credentials cannot be read by the new app, use **Unlock saved credentials** and respond to macOS’s authorization prompt yourself. Reopen the companion after installing a new saver version.
 

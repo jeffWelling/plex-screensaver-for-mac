@@ -405,7 +405,7 @@
 				COMBINE_HIDPI_IMAGES = NO;
 				DEAD_CODE_STRIPPING = YES;
 				INFOPLIST_FILE = PlexSaver/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = Montage;
+				INFOPLIST_KEY_CFBundleDisplayName = "Montage v$(MARKETING_VERSION)";
 				INSTALL_PATH = "$(HOME)/Library/Screen Savers";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -430,7 +430,7 @@
 				COMBINE_HIDPI_IMAGES = NO;
 				DEAD_CODE_STRIPPING = YES;
 				INFOPLIST_FILE = PlexSaver/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = Montage;
+				INFOPLIST_KEY_CFBundleDisplayName = "Montage v$(MARKETING_VERSION)";
 				INSTALL_PATH = "$(HOME)/Library/Screen Savers";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",

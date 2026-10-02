@@ -12,19 +12,7 @@ final class MontageOptionsDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         installMenu()
         do {
-            let paths = [
-                FileManager.default.homeDirectoryForCurrentUser
-                    .appendingPathComponent("Library/Screen Savers/Montage.saver"),
-                URL(fileURLWithPath: "/Library/Screen Savers/Montage.saver")
-            ]
-            guard let path = paths.first(where: { FileManager.default.fileExists(atPath: $0.path) }) else {
-                throw OptionsError.missingSaver
-            }
-            let values = try path.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
-            guard values.isDirectory == true, values.isSymbolicLink != true,
-                  let bundle = Bundle(url: path), bundle.bundleIdentifier == "com.montage.Montage" else {
-                throw OptionsError.invalidSaver
-            }
+            let bundle = try installedSaverBundle()
             try bundle.loadAndReturnError()
             guard let viewType = bundle.principalClass as? ScreenSaverView.Type,
                   let view = viewType.init(frame: NSRect(x: 0, y: 0, width: 320, height: 200), isPreview: true),
@@ -70,6 +58,33 @@ final class MontageOptionsDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.async { NSApp.terminate(nil) }
     }
 
+    private func installedSaverBundle() throws -> Bundle {
+        let directories = [
+            FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library/Screen Savers", isDirectory: true),
+            URL(fileURLWithPath: "/Library/Screen Savers", isDirectory: true)
+        ]
+        // Prefer a user installation, then choose its newest valid release. Reading
+        // metadata here does not load any plugin code; only the winner is loaded.
+        for directory in directories {
+            let paths = (try? FileManager.default.contentsOfDirectory(
+                at: directory, includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
+                options: [.skipsHiddenFiles]
+            )) ?? []
+            let candidates = paths.compactMap { InstalledSaver(url: $0) }
+            if let latest = candidates.max(by: { first, second in
+                if first.version != second.version {
+                    return first.version.lexicographicallyPrecedes(second.version)
+                }
+                if first.build != second.build { return first.build < second.build }
+                return first.filenamePriority < second.filenamePriority
+            }) {
+                return latest.bundle
+            }
+        }
+        throw OptionsError.missingSaver
+    }
+
     private func installMenu() {
         let menu = NSMenu()
         let appItem = NSMenuItem()
@@ -92,6 +107,57 @@ final class MontageOptionsDelegate: NSObject, NSApplicationDelegate {
         editItem.submenu = editMenu
         menu.addItem(editItem)
         NSApp.mainMenu = menu
+    }
+}
+
+/// Recognize only Montage's current and historical installation filenames.
+private struct InstalledSaver {
+    let bundle: Bundle
+    let version: [Int]
+    let build: Int
+    let filenamePriority: Int
+
+    init?(url: URL) {
+        let filename = url.lastPathComponent
+        let namedVersion: String?
+        if filename == "Montage.saver" || filename == "PlexSaver.saver" {
+            namedVersion = nil
+            filenamePriority = 0
+        } else if filename.hasPrefix("Montage v"), filename.hasSuffix(".saver") {
+            namedVersion = String(filename.dropFirst("Montage v".count).dropLast(".saver".count))
+            filenamePriority = 2
+        } else if filename.hasPrefix("Montage_v"), filename.hasSuffix(".saver") {
+            namedVersion = String(filename.dropFirst("Montage_v".count).dropLast(".saver".count))
+            filenamePriority = 1
+        } else {
+            return nil
+        }
+        guard let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]),
+              values.isDirectory == true, values.isSymbolicLink != true,
+              let candidate = Bundle(url: url), candidate.bundleIdentifier == "com.montage.Montage",
+              let versionString = candidate.infoDictionary?["CFBundleShortVersionString"] as? String,
+              let releaseVersion = Self.releaseVersion(versionString),
+              namedVersion == nil || namedVersion == versionString,
+              let buildString = candidate.infoDictionary?["CFBundleVersion"] as? String,
+              buildString.utf8.allSatisfy({ (48...57).contains($0) }),
+              let releaseBuild = Int(buildString), releaseBuild >= 0 else {
+            return nil
+        }
+        bundle = candidate
+        version = releaseVersion
+        build = releaseBuild
+    }
+
+    private static func releaseVersion(_ value: String) -> [Int]? {
+        let parts = value.split(separator: ".", omittingEmptySubsequences: false)
+        guard parts.count == 3 else { return nil }
+        var numbers: [Int] = []
+        for part in parts {
+            guard !part.isEmpty, part.utf8.allSatisfy({ (48...57).contains($0) }),
+                  part.count == 1 || part.first != "0", let number = Int(part) else { return nil }
+            numbers.append(number)
+        }
+        return numbers
     }
 }
 

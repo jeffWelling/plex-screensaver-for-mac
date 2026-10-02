@@ -13,7 +13,7 @@ from pathlib import Path
 IDENTIFIER = "com.montage.Montage"
 OPTIONS_IDENTIFIER = "com.montage.Options"
 OPTIONS_NAME = "Montage Options.app"
-LEGACY_NAME = re.compile(r"(?:Montage_v\d+\.\d+\.\d+|PlexSaver)\.saver")
+VERSIONED_NAME = re.compile(r"(?:Montage v|Montage_v)[0-9]+\.[0-9]+\.[0-9]+\.saver")
 
 
 def metadata(bundle, identifier=IDENTIFIER):
@@ -42,6 +42,13 @@ def validate(bundle, identifier=IDENTIFIER):
         raise ValueError("Installation requires both Apple silicon and Intel architectures")
     if not info.get("CFBundleShortVersionString") or not info.get("CFBundleVersion"):
         raise ValueError("Missing bundle version")
+    if identifier == IDENTIFIER:
+        version = info["CFBundleShortVersionString"]
+        if not isinstance(version, str) or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
+            raise ValueError("Screensaver version must contain three numeric components")
+        expected_name = f"Montage v{version}"
+        if any(info.get(key) != expected_name for key in ("CFBundleDisplayName", "CFBundleName")):
+            raise ValueError(f"Both screensaver names must equal {expected_name}")
     if identifier == OPTIONS_IDENTIFIER and info.get("CFBundlePackageType") != "APPL":
         raise ValueError("The Options bundle must be a macOS application")
     return info
@@ -75,7 +82,7 @@ def old_bundles(directory):
         return []
     result = []
     for bundle in directory.iterdir():
-        if bundle.name == "Montage.saver" or LEGACY_NAME.fullmatch(bundle.name):
+        if bundle.name in {"Montage.saver", "PlexSaver.saver"} or VERSIONED_NAME.fullmatch(bundle.name):
             try:
                 metadata(bundle)
                 result.append(bundle)
@@ -149,7 +156,8 @@ class Replacement:
 
 def install(source, directory, options_source=None, options_directory=None):
     info = validate_pair(source, options_source)
-    saver = Replacement(source, directory, "Montage.saver", IDENTIFIER, "Montage", "Previous.saver")
+    saver = Replacement(source, directory, f"Montage v{info['CFBundleShortVersionString']}.saver",
+                        IDENTIFIER, "Montage", "Previous.saver")
     plans = [saver]
     if options_source is not None:
         options_directory = options_directory or Path.home() / "Applications"
@@ -178,19 +186,30 @@ def install(source, directory, options_source=None, options_directory=None):
             raise
         # Remove identified legacy copies only once the replacement pair exists.
         legacy = [old for old in old_bundles(directory) if old != saver.target]
-        if not saver.had_target and legacy:
+        candidates = ([saver.backup] if saver.backup.exists() else []) + legacy
+        obsolete_backup = None
+        if candidates:
             def version_key(bundle):
                 old_info = metadata(bundle)
                 numbers = tuple(int(part) for part in str(old_info.get("CFBundleShortVersionString", "0")).split(".") if part.isdigit())
                 build = str(old_info.get("CFBundleVersion", "0"))
                 return numbers, int(build) if build.isdigit() else 0
-            old = max(legacy, key=version_key)
-            os.replace(old, saver.backup)
-            legacy.remove(old)
+            newest = max(candidates, key=version_key)
+            if newest != saver.backup:
+                # Secure the newest copy before removing the replaced target's
+                # backup. Either failed move leaves that newest copy recoverable.
+                secured = directory / f".Montage-backup-{uuid.uuid4().hex}.saver"
+                os.replace(newest, secured)
+                if saver.backup.exists():
+                    obsolete_backup = saver.backup
+                saver.backup = secured
+                legacy.remove(newest)
         for old in legacy:
             shutil.rmtree(old)
         for plan in plans:
             plan.retain_previous()
+        if obsolete_backup is not None:
+            shutil.rmtree(obsolete_backup)
         print(f"Installed Montage {info['CFBundleShortVersionString']} (build {info['CFBundleVersion']}) at {saver.target}")
         for plan in plans:
             if plan.previous.exists():
@@ -198,7 +217,7 @@ def install(source, directory, options_source=None, options_directory=None):
         if options_source is not None:
             print(f"Open {plans[1].target} to configure Montage independently of System Settings.")
         print("Close the screensaver picker with Done, quit System Settings, and reopen it to load the updated bundle.")
-        print("On current macOS: Wallpaper → Screen Saver… → Custom → Other → Show All → Montage → Options…")
+        print(f"On current macOS: Wallpaper → Screen Saver… → Custom → Other → Show All → {info['CFBundleDisplayName']} → Options…")
     finally:
         for plan in plans:
             plan.cleanup_stage()

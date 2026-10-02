@@ -19,7 +19,16 @@ staging="$(mktemp -d "$PWD/build/release/.release-XXXXXX")"
 trap 'if [[ -f "$staging/.retain-for-recovery" ]]; then echo "Release recovery files retained at $staging" >&2; else rm -rf "$staging"; fi' EXIT HUP INT TERM
 submission="$staging/Montage"
 mkdir "$submission"
-bundle="$submission/Montage.saver"
+version="$(python3 - "$source_bundle/Contents/Info.plist" <<'PYVERSION'
+import plistlib, re, sys
+with open(sys.argv[1], 'rb') as stream:
+    version = str(plistlib.load(stream)['CFBundleShortVersionString'])
+if not re.fullmatch(r'\d+\.\d+\.\d+', version):
+    raise SystemExit('Invalid screensaver release version')
+print(version)
+PYVERSION
+)"
+bundle="$submission/Montage v$version.saver"
 options="$submission/Montage Options.app"
 ditto "$source_bundle" "$bundle"
 ditto "$source_options" "$options"
@@ -45,25 +54,55 @@ done
 ditto -c -k --sequesterRsrc --keepParent "$bundle" "$staging/Montage.saver.zip"
 ditto -c -k --sequesterRsrc --keepParent "$options" "$staging/Montage.Options.zip"
 # Never replace unrelated or symlink output, and restore both ZIPs if publication fails.
-python3 - "$staging" <<'PYPUBLISH'
-import os, plistlib, sys, zipfile
+python3 - "$staging" "$version" <<'PYPUBLISH'
+import os, plistlib, re, sys, zipfile
 from pathlib import Path
 staging = Path(sys.argv[1])
 release = staging.parent
-artifacts = [('Montage.saver.zip', 'Montage.saver', 'com.montage.Montage'),
+version = sys.argv[2]
+artifacts = [('Montage.saver.zip', f'Montage v{version}.saver', 'com.montage.Montage'),
              ('Montage.Options.zip', 'Montage Options.app', 'com.montage.Options')]
+
+def archive_metadata(path, identifier, expected_root=None):
+    with zipfile.ZipFile(path) as archive:
+        entries = [name for name in archive.namelist()
+                   if name.endswith('/Contents/Info.plist') and name.count('/') == 2]
+        if len(entries) != 1:
+            raise ValueError('archive must contain one bundle at its root')
+        root = entries[0].split('/')[0]
+        info = plistlib.loads(archive.read(entries[0]))
+    if info.get('CFBundleIdentifier') != identifier:
+        raise ValueError('unrelated bundle identifier')
+    archive_version = str(info.get('CFBundleShortVersionString', ''))
+    if not re.fullmatch(r'\d+\.\d+\.\d+', archive_version) or not info.get('CFBundleVersion'):
+        raise ValueError('invalid bundle version')
+    if identifier == 'com.montage.Montage':
+        allowed_roots = ('Montage.saver', f'Montage v{archive_version}.saver', f'Montage_v{archive_version}.saver')
+    else:
+        allowed_roots = ('Montage Options.app',)
+    if root not in allowed_roots or (expected_root is not None and root != expected_root):
+        raise ValueError('bundle filename does not match its version')
+    return archive_version, str(info['CFBundleVersion'])
+
+expected_versions = []
 for name, root, identifier in artifacts:
+    try:
+        staged_version = archive_metadata(staging / name, identifier, root)
+        if staged_version[0] != version:
+            raise ValueError('archive version differs from signed release')
+        expected_versions.append(staged_version)
+    except (OSError, ValueError, KeyError, zipfile.BadZipFile, plistlib.InvalidFileException) as error:
+        raise SystemExit(f'Refusing to publish invalid artifact {name}: {error}')
     target = release / name
     if target.is_symlink() or (target.exists() and not target.is_file()):
         raise SystemExit(f'Refusing to replace non-file or symlink artifact: {target}')
     if target.exists():
         try:
-            with zipfile.ZipFile(target) as archive:
-                info = plistlib.loads(archive.read(f'{root}/Contents/Info.plist'))
-            if info.get('CFBundleIdentifier') != identifier:
-                raise ValueError('unrelated bundle identifier')
+            archive_metadata(target, identifier)
         except (OSError, ValueError, KeyError, zipfile.BadZipFile, plistlib.InvalidFileException) as error:
             raise SystemExit(f'Refusing to replace unrelated artifact {target}: {error}')
+if len(set(expected_versions)) != 1:
+    raise SystemExit('Screensaver and Options release archives must have matching versions and builds')
 replaced, moved = [], []
 try:
     for name, _, _ in artifacts:

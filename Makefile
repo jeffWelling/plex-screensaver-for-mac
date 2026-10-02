@@ -8,6 +8,7 @@ BUILT_OPTIONS = $(BUILD_ROOT)/Build/Products/$(CONFIG)/Montage Options.app
 CODE_SIGNING_ALLOWED ?= NO
 
 VERSION := $(shell sed -n 's/^MARKETING_VERSION = //p' Version.xcconfig)
+SAVER_NAME = Montage v$(VERSION).saver
 BUILD := $(shell sed -n 's/^CURRENT_PROJECT_VERSION = //p' Version.xcconfig)
 
 .PHONY: build build-options clean install uninstall version bump-patch bump-minor bump-major test validate archive release
@@ -46,12 +47,13 @@ test:
 
 archive: override SCHEME = PlexSaver
 archive: build validate
+	python3 -c 'import plistlib, sys; expected = tuple(sys.argv[1:3]); actual = [(str(info.get("CFBundleShortVersionString", "")), str(info.get("CFBundleVersion", ""))) for info in [plistlib.load(open(path + "/Contents/Info.plist", "rb")) for path in sys.argv[3:]]]; sys.exit("Archive bundle versions do not match Version.xcconfig") if any(version != expected for version in actual) else None' "$(VERSION)" "$(BUILD)" "$(BUILT_SAVER)" "$(BUILT_OPTIONS)"
 	mkdir -p build/release
 	@set -eu; STAGING=$$(mktemp -d "$(CURDIR)/build/release/.archive-XXXXXX"); \
 	trap 'rm -rf "$$STAGING"' EXIT HUP INT TERM; \
-	ditto "$(BUILT_SAVER)" "$$STAGING/Montage.saver" && \
+	ditto "$(BUILT_SAVER)" "$$STAGING/$(SAVER_NAME)" && \
 	ditto "$(BUILT_OPTIONS)" "$$STAGING/Montage Options.app" && \
-	ditto -c -k --sequesterRsrc --keepParent "$$STAGING/Montage.saver" "$$STAGING/Montage.saver.zip" && \
+	ditto -c -k --sequesterRsrc --keepParent "$$STAGING/$(SAVER_NAME)" "$$STAGING/Montage.saver.zip" && \
 	ditto -c -k --sequesterRsrc --keepParent "$$STAGING/Montage Options.app" "$$STAGING/Montage.Options.zip" && \
 	test ! -L "$(CURDIR)/build/release/Montage.saver.zip" && \
 	test ! -L "$(CURDIR)/build/release/Montage.Options.zip" && \
