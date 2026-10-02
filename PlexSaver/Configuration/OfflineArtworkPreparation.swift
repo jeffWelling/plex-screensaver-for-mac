@@ -17,7 +17,11 @@ struct OfflineArtworkPreparationResult: Equatable, Sendable {
     let downloaded: Int
     let failed: Int
     let limited: Bool
+    var matchingTitles: Int? = nil
+    var alreadyPrepared = false
     var message: String {
+        if matchingTitles == 0 { return "No artwork matches the selected libraries and filters." }
+        if alreadyPrepared, let matchingTitles { return "All \(matchingTitles) selected titles are already prepared for offline playback." }
         let suffix = limited ? " Preparation is limited to 200 titles per run; run it again to continue." : ""
         if failed > 0 { return "Checked \(checked) titles · \(downloaded) images downloaded · \(failed) unavailable. Existing artwork was kept.\(suffix)" }
         return "Checked \(checked) titles · \(downloaded) images downloaded.\(suffix)"
@@ -118,7 +122,8 @@ struct OfflineArtworkPreparation: OfflineArtworkPreparing {
         let readyPaths = Set(readyVariants.map(\.artPath))
         let ready = Set(matching.filter { item in artworkVariants(for: item, source: settings.imageSource, width: requestWidth, height: requestHeight).allSatisfy { readyPaths.contains($0.path) } }.map(\.titleKey))
         let dates = Dictionary(uniqueKeysWithValues: available.map { ($0.item.titleKey, $0.downloadedAt) })
-        let candidates = matching.sorted {
+        let batch = refreshExisting ? matching : matching.filter { !ready.contains($0.titleKey) }
+        let candidates = batch.sorted {
             if ready.contains($0.titleKey) != ready.contains($1.titleKey) { return !ready.contains($0.titleKey) }
             let first = dates[$0.titleKey] ?? .distantPast, second = dates[$1.titleKey] ?? .distantPast
             return first == second ? $0.titleKey < $1.titleKey : first < second
@@ -145,7 +150,8 @@ struct OfflineArtworkPreparation: OfflineArtworkPreparing {
         }
         try Task.checkCancellation()
         if failed == 0 { await cache.markPreparationCompleted() }
-        return OfflineArtworkPreparationResult(checked: completed, downloaded: downloaded, failed: failed, limited: candidates.count > maximumTitles)
+        return OfflineArtworkPreparationResult(checked: completed, downloaded: downloaded, failed: failed, limited: candidates.count > maximumTitles,
+            matchingTitles: matching.count, alreadyPrepared: !refreshExisting && !matching.isEmpty && candidates.isEmpty)
     }
     private func artwork(for item: MediaItem, source: ImageSourceType, width: Int, height: Int) -> (path: String, source: ImageSourceType)? {
         guard let path = ArtworkSelection.path(for: item, source: source, width: width, height: height) else { return nil }

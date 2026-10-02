@@ -179,4 +179,48 @@ final class OfflineArtworkPreparationTests: XCTestCase {
         XCTAssertEqual(ready.readyTitles, 1)
     }
 
+    func testAlreadyPreparedCatalogDoesNotOfferAnEndlessAdditionalBatch() async throws {
+        let cache = try cache(), items = makeItems(3), provider = PreparationProvider(["a": makeItems(3)])
+        for item in items {
+            var tagged = item; tagged.libraryId = "a"
+            await cache.store(item.artPaths[.fanart]!, image: preparationImage(), item: tagged, source: .fanart, width: 16, height: 16)
+        }
+        let service = OfflineArtworkPreparation(maximumTitles: 1, makeProvider: { _ in provider }, makeCache: { _ in cache })
+        let result = try await service.prepare(connection: connection, settings: settings(), width: 16, height: 16, refreshExisting: false) { _ in }
+        XCTAssertTrue(result.alreadyPrepared)
+        XCTAssertEqual(result.matchingTitles, 3)
+        XCTAssertEqual(result.checked, 0)
+        XCTAssertEqual(result.downloaded, 0)
+        XCTAssertFalse(result.limited)
+        XCTAssertTrue(result.message.contains("already prepared"))
+        XCTAssertFalse(result.message.contains("run it again"))
+        let paths = await provider.paths
+        XCTAssertTrue(paths.isEmpty)
+    }
+    func testEmptySelectionHasNoMatchingArtworkInsteadOfClaimingAlreadyPrepared() async throws {
+        let cache = try cache(), provider = PreparationProvider(["a": makeItems(2)])
+        let service = OfflineArtworkPreparation(makeProvider: { _ in provider }, makeCache: { _ in cache })
+        let result = try await service.prepare(connection: connection, settings: settings(selection: .selected([])), width: 16, height: 16, refreshExisting: false) { _ in }
+        XCTAssertFalse(result.alreadyPrepared)
+        XCTAssertEqual(result.matchingTitles, 0)
+        XCTAssertEqual(result.checked, 0)
+        XCTAssertFalse(result.limited)
+        XCTAssertTrue(result.message.contains("No artwork matches"))
+    }
+    func testRefreshStillChecksPreparedTitlesWithinItsBoundedBatch() async throws {
+        let cache = try cache(), items = makeItems(3), provider = PreparationProvider(["a": makeItems(3)])
+        for item in items {
+            var tagged = item; tagged.libraryId = "a"
+            await cache.store(item.artPaths[.fanart]!, image: preparationImage(), item: tagged, source: .fanart, width: 16, height: 16)
+        }
+        let service = OfflineArtworkPreparation(maximumTitles: 1, makeProvider: { _ in provider }, makeCache: { _ in cache })
+        let result = try await service.prepare(connection: connection, settings: settings(), width: 16, height: 16, refreshExisting: true) { _ in }
+        XCTAssertFalse(result.alreadyPrepared)
+        XCTAssertTrue(result.limited)
+        XCTAssertEqual(result.checked, 1)
+        XCTAssertEqual(result.downloaded, 1)
+        let paths = await provider.paths
+        XCTAssertEqual(paths.count, 1)
+    }
+
 }
