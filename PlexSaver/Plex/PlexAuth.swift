@@ -11,6 +11,7 @@ import Foundation
 import AppKit
 import ScreenSaver
 import os.log
+import Darwin
 
 struct PlexPin: Decodable {
     let id: Int
@@ -24,16 +25,62 @@ struct PlexResource: Decodable {
     let connections: [PlexConnection]
     let accessToken: String?
     let clientIdentifier: String?
+    let httpsRequired: Bool?
 }
 
 struct PlexConnection: Decodable {
     let uri: String
     let local: Bool
     let connectionProtocol: String?
+    let address: String?
+    let port: Int?
+    let relay: Bool?
+
+    init(uri: String, local: Bool, connectionProtocol: String?, address: String? = nil,
+         port: Int? = nil, relay: Bool? = nil) {
+        self.uri = uri; self.local = local; self.connectionProtocol = connectionProtocol
+        self.address = address; self.port = port; self.relay = relay
+    }
 
     private enum CodingKeys: String, CodingKey {
-        case uri, local
+        case uri, local, address, port, relay
         case connectionProtocol = "protocol"
+    }
+
+    /// `includeHttps=1` can return only a plex.direct URI. Plex separately
+    /// advertises the underlying address and port for direct LAN access.
+    /// This is an explicit HTTP choice, never a replacement for the HTTPS URI.
+    var directLANConnection: PlexConnection? {
+        guard local, relay != true, let address, let port, (1...65535).contains(port),
+              Self.isPrivateLANAddress(address), let endpoint = try? ServerEndpoint(uri),
+              endpoint.url.path.isEmpty,
+              (endpoint.url.port ?? (endpoint.isSecure ? 443 : 80)) == port,
+              let host = endpoint.url.host?.lowercased(),
+              host.hasSuffix(".plex.direct") || host == address.lowercased() || host == "[\(address.lowercased())]" else { return nil }
+        let hostLiteral = address.contains(":") ? "[\(address)]" : address
+        guard let direct = try? ServerEndpoint("http://\(hostLiteral):\(port)") else { return nil }
+        return PlexConnection(uri: direct.canonicalURLString, local: true, connectionProtocol: "http",
+                              address: address, port: port, relay: false)
+    }
+
+    private static func isPrivateLANAddress(_ address: String) -> Bool {
+        var ipv4 = in_addr()
+        if inet_pton(AF_INET, address, &ipv4) == 1 {
+            return withUnsafeBytes(of: ipv4) { bytes in
+                bytes[0] == 10 || (bytes[0] == 172 && (16...31).contains(bytes[1])) ||
+                    (bytes[0] == 192 && bytes[1] == 168) || (bytes[0] == 169 && bytes[1] == 254)
+            }
+        }
+        var ipv6 = in6_addr()
+        if inet_pton(AF_INET6, address, &ipv6) == 1 {
+            return withUnsafeBytes(of: ipv6) { bytes in
+                // Unique-local addresses are routable without an interface scope.
+                // Link-local IPv6 addresses need an interface identifier, which
+                // Plex's resource metadata does not establish for this Mac.
+                bytes[0] & 0xfe == 0xfc
+            }
+        }
+        return false
     }
 }
 
@@ -169,6 +216,8 @@ actor PlexAuth {
                 data = try await transport.data(for: request, maximumBytes: URLSessionTransport.maximumJSONBytes)
             } catch MediaNetworkError.unavailable {
                 continue
+            } catch MediaNetworkError.nameResolutionFailed {
+                continue
             } catch MediaNetworkError.missingArtwork {
                 throw PlexAuthError.timeout
             } catch MediaNetworkError.throttled(let retryAfter) {
@@ -227,7 +276,8 @@ actor PlexAuth {
             try Task.checkCancellation()
             let token = try validatedCredential(resource.accessToken ?? authToken)
             var seen = Set<String>()
-            let valid = resource.connections.filter {
+            let directLAN = resource.httpsRequired == true ? [] : resource.connections.compactMap(\.directLANConnection)
+            let valid = (resource.connections + directLAN).filter {
                 guard let endpoint = try? ServerEndpoint($0.uri) else { return false }
                 return seen.insert(endpoint.canonicalURLString).inserted
             }

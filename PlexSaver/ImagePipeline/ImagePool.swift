@@ -642,6 +642,7 @@ actor ImagePool {
             case .missingArtwork, .invalidImageData: return "artwork unavailable"
             case .throttled: return "server busy"
             case .unavailable: return "offline"
+            case .nameResolutionFailed: return "DNS lookup failed"
             default: return "request failed"
             }
         }

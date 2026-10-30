@@ -66,9 +66,15 @@ The password is used only for authentication and is not saved. Access tokens are
 
 ### Plex
 
-Sign in through the browser and select a server connection. **Change server** lists each server’s advertised addresses, labeled **Local network** or **Remote**, with HTTPS or unencrypted HTTP indicated before selection. Choose a local address when your Mac is on the server’s LAN. Local HTTP addresses remain selectable even when that server also advertises remote HTTPS addresses. Applying saves the chosen address while preserving library selections and filters for the same account and server.
+Sign in through the browser and select a server connection. **Change server** lists each server’s advertised addresses, labeled **Local network**, **Direct LAN (HTTP)**, or **Remote**. Applying saves the chosen address while preserving library selections and filters for the same account and server.
+
+Plex’s secure local URLs use `plex.direct` DNS names that resolve to LAN IP addresses; they do not require public port forwarding. Some DNS resolvers block those answers (for example, DNS rebinding protection). If the secure hostname fails to resolve, select **Direct LAN (HTTP)**. Montage constructs that option from the local IP address and port Plex advertises separately, even when Plex supplies only an HTTPS URL. It is an explicit, unencrypted connection: your Plex token and artwork travel over HTTP. It is offered only for private LAN addresses and is omitted when Plex reports that the server requires HTTPS. Montage never replaces HTTPS with `https://<IP>` or bypasses certificate validation.
+
+Local access works with Remote Access/port forwarding disabled, as long as your Mac can reach the server’s LAN address and port. Plex’s advertised local addresses can include old or virtual network interfaces; a local label alone does not mean that an address is reachable from this Mac. Allow local network access for Montage Options or the screensaver host if macOS asks. The companion and development app declare local networking access and HTTP exceptions limited to private IP ranges.
 
 Discovery checks advertised secure connections for reachability; listed local addresses may be unavailable when you’re away from the server’s network. Montage tries your selected address first and can retry another advertised HTTPS connection for the same physical server after a network failure; it does not silently downgrade an HTTPS connection to HTTP.
+
+Background: [Plex secure connections and DNS rebinding](https://support.plex.tv/articles/206225077-how-to-use-secure-server-connections/), [Plex network settings](https://support.plex.tv/articles/200430283-network/), and [direct LAN access](https://support.plex.tv/articles/200288666-opening-plex-web-app/). Plex’s separate GDM broadcast discovery is not used by Montage; signed-in discovery uses the account’s advertised server addresses.
 
 ### Local artwork folder
 

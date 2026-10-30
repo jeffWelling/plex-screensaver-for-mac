@@ -9,6 +9,7 @@ enum MediaNetworkError: LocalizedError, Sendable, Equatable {
     case missingArtwork
     case throttled(retryAfter: TimeInterval?)
     case unavailable
+    case nameResolutionFailed
     case httpError(Int)
     case invalidResponse
     case invalidImageData
@@ -22,6 +23,7 @@ enum MediaNetworkError: LocalizedError, Sendable, Equatable {
         case .missingArtwork: return "This artwork is no longer available."
         case .throttled: return "The media server is busy. Montage will retry shortly."
         case .unavailable: return "The media server is currently unreachable."
+        case .nameResolutionFailed: return "The server hostname could not be resolved. For Plex on your LAN, choose a direct IP connection in Change server."
         case .httpError(let status): return "The media server returned HTTP \(status)."
         case .invalidResponse: return "The media server returned an unexpected response."
         case .invalidImageData: return "The media server returned invalid artwork."
@@ -93,6 +95,9 @@ final class URLSessionTransport: NetworkTransport, @unchecked Sendable {
             return data
         } catch let error as URLError {
             if error.code == .cancelled || Task.isCancelled { throw CancellationError() }
+            if error.code == .cannotFindHost || error.code == .dnsLookupFailed {
+                throw MediaNetworkError.nameResolutionFailed
+            }
             throw MediaNetworkError.unavailable
         }
     }

@@ -254,6 +254,77 @@ final class NetworkTests: XCTestCase {
         XCTAssertEqual(requests.count, 1)
     }
 
+    func testHTTPSOnlyResourceAddsDirectLANChoiceWithoutProbingHTTP() async throws {
+        let resources = Data("""
+        [{"name":"Home","provides":"server","clientIdentifier":"home-id","accessToken":"server-token","httpsRequired":false,"connections":[
+          {"uri":"https://10-11-13-4.server.plex.direct:32400","local":true,"protocol":"https","address":"10.11.13.4","port":32400,"relay":false},
+          {"uri":"https://203-0-113-20.server.plex.direct:12345","local":false,"protocol":"https","address":"203.0.113.20","port":12345,"relay":false}]}]
+        """.utf8)
+        let fixture = FixtureTransport { request in
+            if request.url?.host == "plex.tv" { return resources }
+            XCTAssertEqual(request.url?.scheme, "https", "Direct HTTP requires explicit selection")
+            throw MediaNetworkError.unavailable
+        }
+        let server = try await PlexAuth(transport: fixture).discoverServers(authToken: "account-token").first!
+        XCTAssertEqual(server.id, "home-id")
+        XCTAssertEqual(server.token, "server-token")
+        XCTAssertEqual(server.uri, "https://10-11-13-4.server.plex.direct:32400", "DNS failure must not automatically downgrade HTTPS")
+        XCTAssertEqual(server.connections.map(\.uri), [
+            "https://10-11-13-4.server.plex.direct:32400", "http://10.11.13.4:32400",
+            "https://203-0-113-20.server.plex.direct:12345"
+        ])
+        let requests = await fixture.capturedRequests()
+        XCTAssertEqual(requests.count, 3)
+        XCTAssertTrue(requests.allSatisfy { $0.url?.scheme == "https" })
+    }
+
+    func testDirectLANChoiceHonorsHTTPSRequiredAndDeduplicatesAdvertisedHTTP() async throws {
+        let resources = Data("""
+        [{"name":"Required","provides":"server","httpsRequired":true,"connections":[
+          {"uri":"https://192-168-1-20.required.plex.direct:32400","local":true,"address":"192.168.1.20","port":32400}]},
+         {"name":"Preferred","provides":"server","connections":[
+          {"uri":"https://192-168-1-30.preferred.plex.direct:32400","local":true,"address":"192.168.1.30","port":32400},
+          {"uri":"http://192.168.1.30:32400/","local":true,"address":"192.168.1.30","port":32400}]}]
+        """.utf8)
+        let fixture = FixtureTransport { request in
+            if request.url?.host == "plex.tv" { return resources }
+            XCTAssertEqual(request.url?.scheme, "https")
+            return Data("<MediaContainer/>".utf8)
+        }
+        let servers = try await PlexAuth(transport: fixture).discoverServers(authToken: "token")
+        XCTAssertEqual(servers[0].connections.count, 1)
+        XCTAssertEqual(servers[1].connections.map(\.uri), [
+            "https://192-168-1-30.preferred.plex.direct:32400", "http://192.168.1.30:32400/"
+        ])
+    }
+
+    func testDirectLANConnectionUsesValidatedAdvertisedAddressAndPort() {
+        func connection(address: String? = "10.11.13.4", port: Int? = 32400,
+                        local: Bool = true, relay: Bool? = false,
+                        uri: String = "https://10-11-13-4.server.plex.direct:32400") -> PlexConnection {
+            PlexConnection(uri: uri, local: local, connectionProtocol: "https", address: address, port: port, relay: relay)
+        }
+        XCTAssertEqual(connection().directLANConnection?.uri, "http://10.11.13.4:32400")
+        XCTAssertEqual(connection(address: "fd12:3456::20").directLANConnection?.uri, "http://[fd12:3456::20]:32400")
+        XCTAssertEqual(connection(address: "169.254.20.30").directLANConnection?.uri, "http://169.254.20.30:32400")
+        XCTAssertNil(connection(address: nil).directLANConnection)
+        XCTAssertNil(connection(port: nil).directLANConnection)
+        XCTAssertNil(connection(port: 0).directLANConnection)
+        XCTAssertNil(connection(port: 65536).directLANConnection)
+        XCTAssertNil(connection(port: 12345).directLANConnection, "Do not combine inconsistent advertised ports")
+        XCTAssertNil(connection(local: false).directLANConnection)
+        XCTAssertNil(connection(relay: true).directLANConnection)
+        XCTAssertNil(connection(uri: "https://proxy.example:32400/Plex").directLANConnection)
+        XCTAssertNil(connection(uri: "https://proxy.example:32400").directLANConnection)
+        XCTAssertNil(connection(uri: "https://10-11-13-4.server.plex.direct:32400/base").directLANConnection)
+        XCTAssertNil(connection(uri: "https://10-11-13-4.server.plex.direct.evil.invalid:32400").directLANConnection)
+        for invalid in ["8.8.8.8", "203.0.113.20", "172.32.0.1", "192.169.1.1", "127.0.0.1", "0.0.0.0",
+                        "224.0.0.1", "server.local", "10.11.13.4@host", "10.11.13.4/path", "::", "::1",
+                        "ff02::1", "2001:db8::1", "fe80::1", "fe80::1%en0", "::ffff:127.0.0.1"] {
+            XCTAssertNil(connection(address: invalid).directLANConnection, invalid)
+        }
+    }
+
     func testPlexAccountIdentityIsStableAcrossTokenRotation() async throws {
         let fixture = FixtureTransport { request in
             switch request.value(forHTTPHeaderField: "X-Plex-Token") {

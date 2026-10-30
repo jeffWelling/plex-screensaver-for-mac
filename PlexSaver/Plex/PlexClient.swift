@@ -66,6 +66,8 @@ actor PlexClient {
             }
         }
         let credential = try validatedCredential(token)
+        var primaryFailure: MediaNetworkError?
+        var lastFailure: MediaNetworkError = .unavailable
         for (index, endpoint) in endpoints.enumerated() {
             try Task.checkCancellation()
             var request = URLRequest(url: try endpoint.url(path: path, query: query))
@@ -76,10 +78,13 @@ actor PlexClient {
                 try Task.checkCancellation()
                 serverURL = endpoint.canonicalURLString
                 return data
-            } catch MediaNetworkError.unavailable where index < endpoints.count - 1 {
-                continue
+            } catch let error as MediaNetworkError where error == .unavailable || error == .nameResolutionFailed {
+                if index == 0 { primaryFailure = error }
+                lastFailure = error
             }
         }
-        throw MediaNetworkError.unavailable
+        // A remote fallback being offline must not hide why the selected LAN
+        // hostname failed; the user can explicitly choose its direct IP instead.
+        throw primaryFailure == .nameResolutionFailed ? MediaNetworkError.nameResolutionFailed : lastFailure
     }
 }

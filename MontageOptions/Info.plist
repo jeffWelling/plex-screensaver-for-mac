@@ -13,4 +13,26 @@
     <key>LSMinimumSystemVersion</key><string>$(MACOSX_DEPLOYMENT_TARGET)</string>
     <key>NSPrincipalClass</key><string>NSApplication</string>
     <key>NSHighResolutionCapable</key><true/>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Montage connects to your Plex or Jellyfin server on your local network to display library artwork.</string>
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsLocalNetworking</key><true/>
+        <!-- Explicit HTTP LAN choices only; Internet connections keep ATS defaults. -->
+        <key>NSExceptionDomains</key>
+        <dict>
+            <key>10.0.0.0/8</key>
+            <dict><key>NSExceptionAllowsInsecureHTTPLoads</key><true/></dict>
+            <key>172.16.0.0/12</key>
+            <dict><key>NSExceptionAllowsInsecureHTTPLoads</key><true/></dict>
+            <key>192.168.0.0/16</key>
+            <dict><key>NSExceptionAllowsInsecureHTTPLoads</key><true/></dict>
+            <key>169.254.0.0/16</key>
+            <dict><key>NSExceptionAllowsInsecureHTTPLoads</key><true/></dict>
+            <key>fc00::/7</key>
+            <dict><key>NSExceptionAllowsInsecureHTTPLoads</key><true/></dict>
+            <key>fe80::/10</key>
+            <dict><key>NSExceptionAllowsInsecureHTTPLoads</key><true/></dict>
+        </dict>
+    </dict>
 </dict></plist>

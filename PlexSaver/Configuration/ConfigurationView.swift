@@ -196,7 +196,7 @@ import SwiftUI
                 Text(viewModel.plexServerURL).font(.caption).textSelection(.enabled)
                 HStack { Button("Change server") { viewModel.changeServer() }; Button("Sign out") { viewModel.signOut() } }
             } else if !viewModel.discoveredServers.isEmpty {
-                Text("Choose a local address when you’re on the server’s network, or a remote address when you’re away.")
+                Text("Secure LAN connections use Plex’s DNS names. If those names don’t resolve, choose Direct LAN (HTTP) to connect by IP without port forwarding. HTTP sends your Plex token and artwork without encryption.")
                     .font(.caption).foregroundStyle(.secondary)
                 ForEach(viewModel.discoveredServers) { server in
                     VStack(alignment: .leading, spacing: 6) {
@@ -207,7 +207,7 @@ import SwiftUI
                             ForEach(server.connections, id: \.uri) { connection in
                                 Button { viewModel.selectServer(server, connection: connection) } label: {
                                     VStack(alignment: .leading, spacing: 2) {
-                                        Text("\(connection.local ? "Local network" : "Remote") · \((try? ServerEndpoint(connection.uri).isSecure) == true ? "HTTPS" : "HTTP · Unencrypted")")
+                                        Text(connectionLabel(connection))
                                         Text(connection.uri).font(.caption).textSelection(.disabled)
                                     }
                                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -228,6 +228,13 @@ import SwiftUI
             }
             if !viewModel.signInStatus.isEmpty { Text(viewModel.signInStatus).font(.caption).foregroundStyle(.secondary) }
         }
+    }
+    private func connectionLabel(_ connection: PlexConnection) -> String {
+        let secure = (try? ServerEndpoint(connection.uri).isSecure) == true
+        if connection.local {
+            return secure ? "Local network · HTTPS" : "Direct LAN (HTTP) · Unencrypted"
+        }
+        return secure ? "Remote · HTTPS" : "Remote · HTTP · Unencrypted"
     }
     private var jellyfinAccount: some View {
         VStack(alignment: .leading, spacing: 8) {
