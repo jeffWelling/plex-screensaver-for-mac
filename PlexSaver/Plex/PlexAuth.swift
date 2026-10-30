@@ -207,7 +207,7 @@ actor PlexAuth {
 
     // MARK: - Server Discovery
 
-    /// Discover all Plex Media Servers owned by the authenticated user.
+    /// Discover owned and shared Plex Media Servers available to the account.
     func discoverServers(authToken: String) async throws -> [PlexServer] {
         guard let url = URL(string: "https://plex.tv/api/v2/resources?includeHttps=1&includeRelay=0") else {
             throw PlexAuthError.invalidURL
@@ -226,16 +226,25 @@ actor PlexAuth {
         for resource in resources where resource.provides.split(separator: ",").contains("server") {
             try Task.checkCancellation()
             let token = try validatedCredential(resource.accessToken ?? authToken)
-            let valid = resource.connections.filter { (try? ServerEndpoint($0.uri)) != nil }
-            let secure = valid.filter { (try? ServerEndpoint($0.uri).isSecure) == true }
-            // HTTP-only servers remain selectable with the Options warning.
-            // Credentials are never sent to HTTP while probing discovery.
-            let ranked = (secure.isEmpty ? valid : secure).sorted {
+            var seen = Set<String>()
+            let valid = resource.connections.filter {
+                guard let endpoint = try? ServerEndpoint($0.uri) else { return false }
+                return seen.insert(endpoint.canonicalURLString).inserted
+            }
+            // Keep every advertised endpoint for explicit selection, including
+            // HTTP LAN addresses when a remote HTTPS connection also exists.
+            let ranked = valid.sorted {
                 if $0.local != $1.local { return $0.local }
+                let lhsSecure = (try? ServerEndpoint($0.uri).isSecure) == true
+                let rhsSecure = (try? ServerEndpoint($1.uri).isSecure) == true
+                if lhsSecure != rhsSecure { return lhsSecure }
                 return $0.uri < $1.uri
             }
-            guard let first = ranked.first else { continue }
-            let reachable = secure.isEmpty ? nil : await reachableConnection(in: Array(ranked.prefix(4)), token: token)
+            let secure = ranked.filter { (try? ServerEndpoint($0.uri).isSecure) == true }
+            // Prefer HTTPS automatically and never send credentials to HTTP
+            // during discovery. HTTP choices use the existing Options warning.
+            guard let first = secure.first ?? ranked.first else { continue }
+            let reachable = secure.isEmpty ? nil : await reachableConnection(in: Array(secure.prefix(4)), token: token)
             try Task.checkCancellation()
             let selected = reachable ?? first
             servers.append(PlexServer(name: resource.name, uri: selected.uri, token: token,

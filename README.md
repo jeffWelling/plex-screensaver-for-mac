@@ -66,7 +66,9 @@ The password is used only for authentication and is not saved. Access tokens are
 
 ### Plex
 
-Sign in through the browser and select a server. Discovery checks advertised secure connections for reachability. Montage can retry another advertised HTTPS connection for the same physical server after a network failure; it does not silently downgrade an HTTPS connection to HTTP.
+Sign in through the browser and select a server connection. **Change server** lists each server’s advertised addresses, labeled **Local network** or **Remote**, with HTTPS or unencrypted HTTP indicated before selection. Choose a local address when your Mac is on the server’s LAN. Local HTTP addresses remain selectable even when that server also advertises remote HTTPS addresses. Applying saves the chosen address while preserving library selections and filters for the same account and server.
+
+Discovery checks advertised secure connections for reachability; listed local addresses may be unavailable when you’re away from the server’s network. Montage tries your selected address first and can retry another advertised HTTPS connection for the same physical server after a network failure; it does not silently downgrade an HTTPS connection to HTTP.
 
 ### Local artwork folder
 

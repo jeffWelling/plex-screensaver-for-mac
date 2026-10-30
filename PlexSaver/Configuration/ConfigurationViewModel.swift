@@ -338,15 +338,17 @@ private struct StagedJellyfinConnection {
                 guard accepts(id, provider: .plex) else { return }
                 isSigningIn = false; discoveredServers = servers
                 if !servers.isEmpty { pendingAuthToken = token; pendingPlexAccountID = accountID; isSignedIn = false }
-                signInStatus = servers.isEmpty ? "No reachable secure servers found" : "Select a server"
-                if servers.count == 1 { selectServer(servers[0]) }
+                signInStatus = servers.isEmpty ? "No Plex servers found" : "Select a server connection"
+                if servers.count == 1, servers[0].connections.count <= 1 { selectServer(servers[0]) }
             } catch {
                 guard accepts(id, provider: .plex) else { return }
                 isSigningIn = false; signInStatus = error.localizedDescription
             }
         }
     }
-    func selectServer(_ server: PlexServer) {
+    func selectServer(_ server: PlexServer, connection: PlexConnection? = nil) {
+        let uri = connection?.uri ?? server.uri
+        if connection != nil, !server.connections.contains(where: { $0.uri == uri }) { return }
         profileSelections[currentProfile] = currentSelection
         profileFilters[currentProfile] = mediaFilter
         cancelOperations()
@@ -355,7 +357,7 @@ private struct StagedJellyfinConnection {
             dirtyCredentials.insert("PlexAuthToken"); credentialsToClear.remove("PlexAuthToken")
             self.pendingAuthToken = nil; self.pendingPlexAccountID = nil
         }
-        plexServerURL = server.uri; plexToken = server.token; selectedServerURI = server.uri
+        plexServerURL = uri; plexToken = server.token; selectedServerURI = uri
         plexServerID = server.id; plexFallbackURLs = server.connections.map(\.uri)
         dirtyCredentials.insert("PlexToken"); credentialsToClear.remove("PlexToken"); isSignedIn = true
         signInStatus = "Connected to \(server.name)"; loadSelection(for: currentProfile)
@@ -372,7 +374,7 @@ private struct StagedJellyfinConnection {
                 let servers = try await services.plexServers(token: token)
                 guard accepts(id, provider: .plex) else { return }
                 discoveredServers = servers; isSigningIn = false
-                isSignedIn = false; signInStatus = servers.isEmpty ? "No reachable secure servers found" : "Select a server"
+                isSignedIn = false; signInStatus = servers.isEmpty ? "No Plex servers found" : "Select a server connection"
             } catch {
                 guard accepts(id, provider: .plex) else { return }
                 isSigningIn = false; signInStatus = error.localizedDescription

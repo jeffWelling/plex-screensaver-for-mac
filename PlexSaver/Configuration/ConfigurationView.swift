@@ -196,8 +196,26 @@ import SwiftUI
                 Text(viewModel.plexServerURL).font(.caption).textSelection(.enabled)
                 HStack { Button("Change server") { viewModel.changeServer() }; Button("Sign out") { viewModel.signOut() } }
             } else if !viewModel.discoveredServers.isEmpty {
+                Text("Choose a local address when you’re on the server’s network, or a remote address when you’re away.")
+                    .font(.caption).foregroundStyle(.secondary)
                 ForEach(viewModel.discoveredServers) { server in
-                    Button { viewModel.selectServer(server) } label: { Label(server.name, systemImage: "server.rack") }
+                    VStack(alignment: .leading, spacing: 6) {
+                        Label(server.name, systemImage: "server.rack").font(.headline)
+                        if server.connections.isEmpty {
+                            Button(server.uri) { viewModel.selectServer(server) }
+                        } else {
+                            ForEach(server.connections, id: \.uri) { connection in
+                                Button { viewModel.selectServer(server, connection: connection) } label: {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text("\(connection.local ? "Local network" : "Remote") · \((try? ServerEndpoint(connection.uri).isSecure) == true ? "HTTPS" : "HTTP · Unencrypted")")
+                                        Text(connection.uri).font(.caption).textSelection(.disabled)
+                                    }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(.vertical, 3)
+                                }
+                            }
+                        }
+                    }
                 }
             } else {
                 HStack {

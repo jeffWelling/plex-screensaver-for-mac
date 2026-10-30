@@ -185,7 +185,73 @@ final class NetworkTests: XCTestCase {
         XCTAssertEqual(servers.count, 1)
         XCTAssertEqual(servers.first?.id, "physical-id")
         XCTAssertEqual(servers.first?.uri, "https://b.invalid")
-        XCTAssertEqual(servers.first?.connections.count, 2)
+        XCTAssertEqual(servers.first?.connections.map(\.uri), [
+            "https://a.invalid", "http://c.invalid", "https://b.invalid"
+        ])
+        XCTAssertEqual(servers.first?.isLocal, false)
+        XCTAssertEqual(servers.first?.token, "token")
+        let requests = await fixture.capturedRequests()
+        XCTAssertEqual(requests.count, 3)
+        XCTAssertTrue(requests.allSatisfy { $0.url?.scheme == "https" })
+    }
+
+    func testDiscoveryRetainsLANAddressAndPrefersHTTPSWhenProbesFail() async throws {
+        let resources = Data("""
+        [{"name":"Shared","provides":"server","clientIdentifier":"shared-id","accessToken":"shared-token","connections":[
+          {"uri":"https://remote.invalid:32400","local":false,"protocol":"https"},
+          {"uri":"http://192.168.1.20:32400","local":true,"protocol":"http"},
+          {"uri":"HTTP://192.168.1.20:32400/","local":true,"protocol":"http"},
+          {"uri":"ftp://192.168.1.20:32400","local":true,"protocol":"ftp"}]}]
+        """.utf8)
+        let fixture = FixtureTransport { request in
+            if request.url?.host == "plex.tv" { return resources }
+            XCTAssertEqual(request.url?.scheme, "https")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "X-Plex-Token"), "shared-token")
+            throw MediaNetworkError.unavailable
+        }
+        let server = try await PlexAuth(transport: fixture).discoverServers(authToken: "account-token").first!
+        XCTAssertEqual(server.uri, "https://remote.invalid:32400")
+        XCTAssertEqual(server.id, "shared-id")
+        XCTAssertEqual(server.connections.map(\.uri), [
+            "http://192.168.1.20:32400", "https://remote.invalid:32400"
+        ])
+        let requests = await fixture.capturedRequests()
+        XCTAssertEqual(requests.count, 2)
+    }
+
+    func testDiscoveryPrefersReachableSecureLANAndRetainsRemoteChoice() async throws {
+        let resources = Data("""
+        [{"name":"Home","provides":"server","connections":[
+          {"uri":"https://remote.invalid","local":false,"protocol":"https"},
+          {"uri":"https://local.invalid","local":true,"protocol":"https"}]}]
+        """.utf8)
+        let fixture = FixtureTransport { request in
+            if request.url?.host == "plex.tv" { return resources }
+            return Data("<MediaContainer/>".utf8)
+        }
+        let server = try await PlexAuth(transport: fixture).discoverServers(authToken: "account-token").first!
+        XCTAssertEqual(server.uri, "https://local.invalid")
+        XCTAssertTrue(server.isLocal)
+        XCTAssertEqual(server.token, "account-token")
+        XCTAssertEqual(server.connections.map(\.uri), ["https://local.invalid", "https://remote.invalid"])
+    }
+
+    func testDiscoveryRetainsHTTPOnlyServerWithoutProbingIt() async throws {
+        let resources = Data("""
+        [{"name":"Home","provides":"server","connections":[
+          {"uri":"http://remote.invalid:32400","local":false,"protocol":"http"},
+          {"uri":"http://192.168.1.20:32400","local":true,"protocol":"http"}]}]
+        """.utf8)
+        let fixture = FixtureTransport { request in
+            XCTAssertEqual(request.url?.host, "plex.tv", "HTTP endpoints must require explicit selection before use")
+            return resources
+        }
+        let server = try await PlexAuth(transport: fixture).discoverServers(authToken: "account-token").first!
+        XCTAssertEqual(server.uri, "http://192.168.1.20:32400")
+        XCTAssertTrue(server.isLocal)
+        XCTAssertEqual(server.connections.count, 2)
+        let requests = await fixture.capturedRequests()
+        XCTAssertEqual(requests.count, 1)
     }
 
     func testPlexAccountIdentityIsStableAcrossTokenRotation() async throws {

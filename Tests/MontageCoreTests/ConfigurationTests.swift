@@ -215,6 +215,131 @@ private actor RecordingRestoreServices: ConfigurationServices {
         XCTAssertEqual(viewModel.plexServerURL, "https://endpoint-B.invalid")
         viewModel.cancelPendingOperations()
     }
+    func testExplicitLocalConnectionPreservesPhysicalServerChoicesAndPersistsOnApply() async {
+        let previous = (Preferences.providerType, Preferences.plexServerURL, Preferences.plexAccountID,
+                        Preferences.plexServerID, Preferences.plexFallbackURLs)
+        let remote = PlexConnection(uri: "https://remote.invalid:32400", local: false, connectionProtocol: "https")
+        let local = PlexConnection(uri: "http://192.168.1.20:32400", local: true, connectionProtocol: "http")
+        let physicalID = UUID().uuidString
+        Preferences.providerType = .plex; Preferences.plexServerURL = remote.uri
+        Preferences.plexAccountID = "42"; Preferences.plexServerID = physicalID
+        let profile = Preferences.connectionProfile
+        let services = SuspendedConfigurationServices(suspendLibraries: false, libraryFixtures: [
+            MediaLibrary(id: "movies", name: "Movies", type: "movies")])
+        let credentials = RecordingConfigurationCredentials()
+        let viewModel = ConfigurationViewModel(services: services, credentials: credentials, restoreCredentials: false)
+        defer {
+            viewModel.cancelPendingOperations()
+            Preferences.defaults.removeObject(forKey: "LibrarySelection.\(profile.namespace)")
+            Preferences.defaults.removeObject(forKey: "MediaFilter.\(profile.namespace)")
+            Preferences.providerType = previous.0; Preferences.plexServerURL = previous.1
+            Preferences.plexAccountID = previous.2; Preferences.plexServerID = previous.3
+            Preferences.plexFallbackURLs = previous.4
+        }
+        let server = PlexServer(name: "Home", uri: remote.uri, token: "server-token", isLocal: false,
+                                id: physicalID, connections: [local, remote])
+        viewModel.selectServer(server)
+        viewModel.allLibraries = false; viewModel.selectedLibraryIds = ["movies"]
+        let filter = MediaFilter(genres: ["Comedy"], collections: ["Favorites"], unwatchedOnly: true)
+        viewModel.mediaFilter = filter
+
+        viewModel.selectServer(server, connection: local)
+
+        XCTAssertEqual(viewModel.plexServerURL, local.uri)
+        XCTAssertEqual(viewModel.selectedServerURI, local.uri)
+        XCTAssertEqual(viewModel.currentConnection.serverURL, local.uri)
+        XCTAssertEqual(viewModel.currentConnection.serverID, physicalID)
+        XCTAssertEqual(viewModel.currentConnection.token, "server-token")
+        XCTAssertEqual(viewModel.currentConnection.fallbackURLs, [local.uri, remote.uri])
+        XCTAssertEqual(viewModel.currentProfile, profile)
+        XCTAssertEqual(viewModel.currentSelection, .selected(["movies"]))
+        XCTAssertEqual(viewModel.mediaFilter, filter)
+        XCTAssertTrue(viewModel.usesHTTP)
+        XCTAssertEqual(Preferences.plexServerURL, remote.uri, "Choosing an endpoint must remain a draft until Apply")
+
+        var closed = false
+        viewModel.apply { closed = true }
+        for _ in 0..<100 where !closed { await Task.yield() }
+        XCTAssertTrue(closed)
+        XCTAssertEqual(Preferences.plexServerURL, local.uri)
+        XCTAssertEqual(Preferences.plexServerID, physicalID)
+        XCTAssertEqual(Preferences.plexFallbackURLs, [local.uri, remote.uri])
+        XCTAssertEqual(Preferences.librarySelection(for: profile), .selected(["movies"]))
+        XCTAssertEqual(Preferences.mediaFilter(for: profile), filter)
+        let saved = await credentials.saved
+        XCTAssertEqual(saved, ["PlexToken"])
+    }
+    func testDefaultServerSelectionUsesRecommendedEndpointInsteadOfFirstConnection() {
+        let local = PlexConnection(uri: "http://192.168.1.20:32400", local: true, connectionProtocol: "http")
+        let remote = PlexConnection(uri: "https://remote.invalid:32400", local: false, connectionProtocol: "https")
+        let server = PlexServer(name: "Home", uri: remote.uri, token: "server-token", isLocal: false,
+                                id: UUID().uuidString, connections: [local, remote])
+        let viewModel = ConfigurationViewModel(services: SuspendedConfigurationServices(suspendLibraries: false),
+                                              credentials: FakeConfigurationCredentials(), restoreCredentials: false)
+        viewModel.providerType = .plex
+        viewModel.selectServer(server)
+        XCTAssertEqual(viewModel.plexServerURL, remote.uri)
+        XCTAssertEqual(viewModel.selectedServerURI, remote.uri)
+        XCTAssertEqual(viewModel.currentConnection.fallbackURLs, [local.uri, remote.uri])
+        XCTAssertFalse(viewModel.usesHTTP)
+        viewModel.cancelPendingOperations()
+    }
+    func testSingleServerWithMultipleConnectionsWaitsForExplicitChoiceAndRetainsAccountToken() async {
+        let local = PlexConnection(uri: "http://192.168.1.20:32400", local: true, connectionProtocol: "http")
+        let remote = PlexConnection(uri: "https://remote.invalid:32400", local: false, connectionProtocol: "https")
+        let server = PlexServer(name: "Home", uri: remote.uri, token: "server-token", isLocal: false,
+                                id: UUID().uuidString, connections: [local, remote])
+        let services = SuspendedConfigurationServices(servers: [server], suspendLibraries: false)
+        let credentials = RecordingConfigurationCredentials()
+        let viewModel = ConfigurationViewModel(services: services, credentials: credentials, restoreCredentials: false)
+        defer { viewModel.cancelPendingOperations() }
+        viewModel.providerType = .plex
+        viewModel.signInWithPlex()
+        for _ in 0..<100 where !(await services.authStarted) { await Task.yield() }
+        let started = await services.authStarted
+        XCTAssertTrue(started)
+        await services.finishAuth()
+        for _ in 0..<100 where viewModel.isSigningIn { await Task.yield() }
+
+        XCTAssertFalse(viewModel.isSigningIn)
+        XCTAssertFalse(viewModel.isSignedIn)
+        XCTAssertEqual(viewModel.discoveredServers.map(\.id), [server.id])
+        XCTAssertEqual(viewModel.discoveredServers.first?.connections.count, 2)
+        XCTAssertTrue(viewModel.authToken.isEmpty, "Account credentials must remain staged while choosing an endpoint")
+        let savedBeforeSelection = await credentials.saved
+        XCTAssertTrue(savedBeforeSelection.isEmpty)
+
+        viewModel.selectServer(server, connection: local)
+
+        XCTAssertTrue(viewModel.isSignedIn)
+        XCTAssertEqual(viewModel.plexServerURL, local.uri)
+        XCTAssertEqual(viewModel.authToken, "late-token")
+        XCTAssertEqual(viewModel.plexToken, "server-token")
+        XCTAssertEqual(viewModel.currentProfile.accountID, "42")
+        XCTAssertEqual(viewModel.currentProfile.serverID, server.id)
+    }
+    func testServerSelectionRejectsConnectionNotAdvertisedByThatServer() {
+        let remote = PlexConnection(uri: "https://remote.invalid:32400", local: false, connectionProtocol: "https")
+        let unadvertised = PlexConnection(uri: "http://unrelated.invalid:32400", local: true, connectionProtocol: "http")
+        let server = PlexServer(name: "Home", uri: remote.uri, token: "server-token", isLocal: false,
+                                id: UUID().uuidString, connections: [remote])
+        let viewModel = ConfigurationViewModel(services: SuspendedConfigurationServices(suspendLibraries: false),
+                                              credentials: FakeConfigurationCredentials(), restoreCredentials: false)
+        defer { viewModel.cancelPendingOperations() }
+        viewModel.providerType = .plex
+        viewModel.selectServer(server)
+        let originalProfile = viewModel.currentProfile
+        viewModel.allLibraries = false; viewModel.selectedLibraryIds = ["movies"]
+
+        viewModel.selectServer(server, connection: unadvertised)
+
+        XCTAssertEqual(viewModel.plexServerURL, remote.uri)
+        XCTAssertEqual(viewModel.selectedServerURI, remote.uri)
+        XCTAssertEqual(viewModel.plexToken, "server-token")
+        XCTAssertEqual(viewModel.currentProfile, originalProfile)
+        XCTAssertEqual(viewModel.currentConnection.fallbackURLs, [remote.uri])
+        XCTAssertEqual(viewModel.currentSelection, .selected(["movies"]))
+    }
     func testEditingServerDuringRestoreNeverSendsSavedTokenToEditedServer() async {
         let previous = (Preferences.providerType, Preferences.jellyfinServerURL, Preferences.jellyfinUsername, Preferences.jellyfinUserId)
         defer {
