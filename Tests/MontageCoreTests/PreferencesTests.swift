@@ -26,6 +26,49 @@ private actor DeferredSnapshotToken {
 }
 
 final class PreferencesTests: XCTestCase {
+    func testRuntimeSnapshotReloadsEndpointWrittenByAnotherProcess() async throws {
+        // Never let this process-based check write the installed saver's domain.
+        XCTAssertTrue(AppConstants.module.hasPrefix(AppConstants.productionModule + ".tests."))
+        guard AppConstants.module.hasPrefix(AppConstants.productionModule + ".tests.") else { return }
+        let previousProvider = Preferences.providerType
+        let previousURL = Preferences.defaults.object(forKey: "PlexServerURL")
+        defer {
+            Preferences.providerType = previousProvider
+            if let previousURL { Preferences.defaults.set(previousURL, forKey: "PlexServerURL") }
+            else { Preferences.defaults.removeObject(forKey: "PlexServerURL") }
+            Preferences.defaults.synchronize()
+        }
+        Preferences.providerType = .plex
+        Preferences.plexServerURL = "https://old-plex-dns.invalid:32400"
+        Preferences.defaults.synchronize()
+        XCTAssertEqual(Preferences.plexServerURL, "https://old-plex-dns.invalid:32400")
+
+        let writer = Process()
+        writer.executableURL = URL(fileURLWithPath: "/usr/bin/defaults")
+        writer.arguments = ["-currentHost", "write", AppConstants.module, "PlexServerURL", "-string", "http://10.1.2.3:32400"]
+        try writer.run()
+        writer.waitUntilExit()
+        XCTAssertEqual(writer.terminationStatus, 0)
+
+        let snapshot = try await Preferences.connectionSnapshot { _ in "fixture-token" }
+        XCTAssertEqual(snapshot.serverURL, "http://10.1.2.3:32400")
+        XCTAssertEqual(snapshot.token, "fixture-token")
+    }
+
+    @MainActor
+    func testConfigurationSignalReceivesOtherHostsButIgnoresOwnAndOtherDomains() {
+        let center = NotificationCenter()
+        let changed = expectation(description: "one external configuration signal")
+        changed.assertForOverFulfill = true
+        let observation = ConfigurationChangeObservation(center: center) { changed.fulfill() }
+        withExtendedLifetime(observation) {
+            center.post(name: Preferences.distributedChangeNotification, object: Preferences.changeNotificationSender)
+            center.post(name: Notification.Name("other.module.configurationChanged"), object: "another-host")
+            center.post(name: Preferences.distributedChangeNotification, object: "another-host")
+            wait(for: [changed], timeout: 1)
+        }
+    }
+
     private func withRepository(_ body: (CredentialRepository, MemorySecrets, UserDefaults) throws -> Void) rethrows {
         let suite = "MontageTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
@@ -103,9 +146,12 @@ final class PreferencesTests: XCTestCase {
         Preferences.plexAccountID = "same-account"; Preferences.plexServerID = UUID().uuidString
         let reader = DeferredSnapshotToken()
         let request = Task { try await Preferences.connectionSnapshot { key in try await reader.read(key) } }
-        for _ in 0..<100 where !(await reader.started) { await Task.yield() }
+        // Reading a fresh cross-process snapshot can wait on cfprefsd before
+        // credential lookup starts. Bound the wait in time, not scheduler turns.
+        for _ in 0..<100 where !(await reader.started) { try await Task.sleep(nanoseconds: 10_000_000) }
         let started = await reader.started
         XCTAssertTrue(started)
+        guard started else { request.cancel(); return }
         Preferences.plexServerURL = "https://new-endpoint.invalid"
         await reader.finish()
         do { _ = try await request.value; XCTFail("An endpoint change must invalidate the pending token snapshot") }

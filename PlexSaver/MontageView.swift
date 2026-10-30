@@ -29,8 +29,19 @@ class MontageView: ScreenSaverView {
     private var fadeLayer: CALayer?
     private var hudLayer: CATextLayer?
     private var observers: [NotificationObservation] = []
+    private var configurationChangeObserver: ConfigurationChangeObservation?
     private var requestPixelSize = CGSize.zero
     private var availableItems = 0
+    private var loggedFirstDraw = false
+
+    /// Public lifecycle diagnostics contain only process-local identifiers and
+    /// booleans, never preferences, server addresses, or credentials.
+    private func logLifecycle(_ event: StaticString) {
+        os_log("Montage %{public}@ pid:%d instance:%d preview:%d attached:%d active:%d requested:%d",
+               log: .screenSaver, type: .info, String(describing: event),
+               ProcessInfo.processInfo.processIdentifier, instanceNumber, isPreview ? 1 : 0,
+               window == nil ? 0 : 1, started ? 1 : 0, hostWantsAnimation ? 1 : 0)
+    }
 
     private var backingScale: CGFloat {
         window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
@@ -46,6 +57,12 @@ class MontageView: ScreenSaverView {
         observers.append(NotificationObservation(center: .default, name: .montageConfigChanged) { [weak self] _ in
             MainActor.assumeIsolated { self?.restart() }
         })
+        configurationChangeObserver = ConfigurationChangeObservation { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.previewConfiguration == nil else { return }
+                self.restart()
+            }
+        }
         observers.append(NotificationObservation(center: .default, name: .montageDisplaysChanged) { [weak self] _ in
             MainActor.assumeIsolated { self?.scheduleGeometryRefresh() }
         })
@@ -74,7 +91,7 @@ class MontageView: ScreenSaverView {
                                                 name: NSWorkspace.screensDidWakeNotification) { [weak self] _ in
             MainActor.assumeIsolated { self?.screensDidWake() }
         })
-        OSLog.event("view.created", detail: "instance=\(instanceNumber), preview=\(isPreview)")
+        logLifecycle("view.created")
     }
 
     @available(*, unavailable)
@@ -92,6 +109,7 @@ class MontageView: ScreenSaverView {
     }
 
     override func startAnimation() {
+        logLifecycle("view.start_requested")
         hostWantsAnimation = true
         guard !displaysAsleep, !started else { return }
         super.startAnimation()
@@ -104,6 +122,7 @@ class MontageView: ScreenSaverView {
         if !isPreview { InstanceTracker.shared.setActive(true, instance: instanceNumber) }
         let run = UUID()
         generation = run
+        if previewConfiguration == nil { Preferences.reloadFromPersistentStore() }
         let snapshot = previewConfiguration?.settings ?? Preferences.settingsSnapshot()
         settings = snapshot
         buildGrid(settings: snapshot)
@@ -115,10 +134,11 @@ class MontageView: ScreenSaverView {
             }
         }
         if !runtimePolicy.pausesPlayback { startHUD(run: run) }
-        OSLog.event("run.started", detail: "instance=\(instanceNumber)")
+        logLifecycle("run.started")
     }
 
     override func stopAnimation() {
+        logLifecycle("view.stop_requested")
         hostWantsAnimation = false
         super.stopAnimation()
         endRun()
@@ -154,7 +174,7 @@ class MontageView: ScreenSaverView {
         availableItems = 0
         requestPixelSize = .zero
         if let pool { Task { await pool.stop() } }
-        OSLog.event("run.stopped", detail: "instance=\(instanceNumber)")
+        logLifecycle("run.stopped")
     }
 
     private func restart() {
@@ -434,6 +454,10 @@ class MontageView: ScreenSaverView {
     }
 
     override func draw(_ rect: NSRect) {
+        if !loggedFirstDraw {
+            loggedFirstDraw = true
+            logLifecycle("view.first_draw")
+        }
         NSColor.black.setFill()
         NSBezierPath(rect: bounds).fill()
     }
@@ -449,6 +473,17 @@ class MontageView: ScreenSaverView {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        logLifecycle("view.window_changed")
+        // System Settings can replace its playback view after Apply without
+        // stopping the old view or starting its replacement. Attachment is an
+        // additional lifecycle signal for playback views; start/stop are already
+        // idempotent when Apple's explicit callbacks arrive later.
+        // Preview views also serve hidden configuration hosts, so their owner
+        // must continue to start and stop them explicitly.
+        if !isPreview {
+            if window != nil { startAnimation() }
+            else { stopAnimation() }
+        }
         gridManager?.updateBackingScale(backingScale)
         scheduleGeometryRefresh()
     }

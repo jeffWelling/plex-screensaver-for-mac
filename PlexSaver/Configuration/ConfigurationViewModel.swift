@@ -160,6 +160,7 @@ private struct StagedJellyfinConnection {
 
     init(services: any ConfigurationServices = DefaultConfigurationServices(), credentials: any ConfigurationCredentials = DefaultConfigurationCredentials(), artworkPreparation: any OfflineArtworkPreparing = OfflineArtworkPreparation.forConnectedDisplays(), restoreCredentials: Bool = true) {
         self.services = services; self.credentials = credentials; self.artworkPreparation = artworkPreparation
+        Preferences.reloadFromPersistentStore()
         let settings = Preferences.settingsSnapshot()
         gridRows = settings.rows; gridColumns = settings.columns; gridAutoColumns = settings.autoColumns
         rotationInterval = settings.rotationInterval; imageSource = settings.imageSource
@@ -515,7 +516,7 @@ private struct StagedJellyfinConnection {
                     await cache.clear()
                 }
                 dirtyCredentials = []; credentialsToClear = []; cacheProfilesToClear = []; disconnectedJellyfin = false; isApplying = false
-                NotificationCenter.default.post(name: .montageConfigChanged, object: nil)
+                Preferences.notifyConfigurationChanged()
                 onSuccess()
             } catch { isApplying = false; storageMessage = error.localizedDescription }
         }
@@ -557,7 +558,7 @@ private struct StagedJellyfinConnection {
             await cache.clear()
             guard !Task.isCancelled, currentProfile == profile, cacheOperationID == operationID else { return }
             isManagingCache = false
-            NotificationCenter.default.post(name: .montageConfigChanged, object: nil)
+            Preferences.notifyConfigurationChanged()
             await readDiagnostics(profile: profile, generation: generation)
         }
     }

@@ -17,6 +17,21 @@ struct Preferences {
     }
     private static let domain = PreferenceDomain()
     static var defaults: UserDefaults { domain.defaults }
+    static let distributedChangeNotification = Notification.Name(AppConstants.module + ".configurationChanged")
+    static let changeNotificationSender = UUID().uuidString
+
+    /// ScreenSaverDefaults can retain stale values in a separate macOS host
+    /// until explicitly synchronized, even after another host has saved them.
+    static func reloadFromPersistentStore() { defaults.synchronize() }
+
+    @MainActor static func notifyConfigurationChanged() {
+        defaults.synchronize()
+        NotificationCenter.default.post(name: .montageConfigChanged, object: nil)
+        // Sandboxed screensaver hosts require a nil userInfo. The signal carries
+        // no settings or credentials; each host reloads its own preference domain.
+        DistributedNotificationCenter.default().postNotificationName(distributedChangeNotification,
+            object: changeNotificationSender, userInfo: nil, deliverImmediately: true)
+    }
     private static func simple<T>(_ key: String, default value: T) -> T { defaults.object(forKey: key) as? T ?? value }
     private static func codable<T: Codable>(_ key: String, default value: T) -> T {
         guard let string = defaults.string(forKey: key), let data = string.data(using: .utf8),
@@ -144,6 +159,7 @@ struct Preferences {
     static func connectionSnapshot(credentialReader: @Sendable (String) async throws -> String = { key in
         try await Preferences.readCredential(key, migrateLegacy: true)
     }) async throws -> ConnectionSnapshot {
+        reloadFromPersistentStore()
         let profile = connectionProfile
         let bookmark = profile.provider == .local ? localFolderBookmark : nil
         let token = profile.provider == .local ? "" : try await credentialReader(profile.provider == .plex ? "PlexToken" : "JellyfinAccessToken")
@@ -205,4 +221,21 @@ struct Preferences {
         defaults.set(true, forKey: "ArtworkChoicesMigrated")
         defaults.synchronize()
     }
+}
+
+/// Receives changes from another host without duplicating the local notification.
+/// The module-specific name keeps development and test preference domains isolated.
+final class ConfigurationChangeObservation: @unchecked Sendable {
+    private let center: NotificationCenter
+    private let token: NSObjectProtocol
+    init(center: NotificationCenter = DistributedNotificationCenter.default(),
+         handler: @Sendable @escaping () -> Void) {
+        self.center = center
+        token = center.addObserver(forName: Preferences.distributedChangeNotification,
+                                   object: nil, queue: .main) { notification in
+            guard notification.object as? String != Preferences.changeNotificationSender else { return }
+            handler()
+        }
+    }
+    deinit { center.removeObserver(token) }
 }

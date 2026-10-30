@@ -33,7 +33,7 @@ make install
 
 `make build` performs an incremental universal Release build in `build/xcode`. Installation validates the exact bundle, verifies the staged copy, and installs `~/Library/Screen Savers/Montage v<version>.saver`. The filename and bundle display name include the release version so System Settings identifies the selected build. A previous installation is retained as the hidden `.Montage-backups/Previous.saver` recovery copy. Older stable and versioned Montage bundles are removed only when their bundle identifier matches Montage and the replacement has been installed successfully. Reopen System Settings after an update.
 
-The source installer also installs **Montage Options.app** in `~/Applications`; open it to configure the installed screensaver in a regular window. It uses the same saved connection, libraries, and display settings. Changes take effect on the next screensaver start; reselect Montage to refresh an already running Settings preview.
+The source installer also installs **Montage Options.app** in `~/Applications`; open it to configure and preview the installed screensaver in a regular window. On macOS versions that isolate Apple's screensaver host in a sandbox, the companion can have a separate preferences store. Use the screensaver's **Options…** in System Settings to configure actual playback on those systems.
 
 `make version` reports source and installed versions. `make uninstall` removes only identified Montage screensaver and Options app bundles. Local builds are unsigned by default; they are distinct from signed distribution releases.
 
@@ -55,6 +55,8 @@ Choose **Mosaic**, **Poster Wall**, or **Calm** for a presentation preset. Prese
 **Show live preview** shows the actual screensaver inside Options using the draft connection and display choices. It does not save preferences or credentials, or contribute to the installed screensaver's recent-title history. Hide the preview when finished; applying or canceling stops it automatically.
 
 Changes are saved together through **Apply and Close**. **Cancel**, Escape, and closing the Options window discard unsaved display and connection changes. Sign-out and disconnect are staged until Apply. Cache-management actions are separate operations; Cancel does not undo artwork already downloaded or deliberately cleared.
+
+The live preview inside Options uses your unsaved choices. The main System Settings preview and screensaver use saved choices. Applying notifies other Montage host processes to reload their settings, and each playback start refreshes the shared preferences cache. This matters when changing between Plex's HTTPS hostname and its direct LAN address. Montage also starts replacement playback views and stops detached views when macOS omits its usual animation callbacks after Options closes.
 
 Saved connections refresh their available libraries when Options opens. Use **Test / Refresh** after changing server availability or library contents. Filters are saved separately for each connection: Plex supports genres, collections, and unwatched titles; Jellyfin supports genres, favorites, and unwatched titles. Values within one category are alternatives; separate enabled categories must all match. Unwatched Plex series include partly watched series. Unknown watch or favorite status does not qualify for an enabled filter.
 

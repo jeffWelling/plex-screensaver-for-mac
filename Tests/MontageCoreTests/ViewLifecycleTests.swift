@@ -4,6 +4,53 @@ import AppKit
 
 final class ViewLifecycleTests: XCTestCase {
     @MainActor
+    func testPlaybackAttachmentStartsAndReplacementStopsOldViewWithoutHostCallbacks() throws {
+        _ = NSApplication.shared
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 360),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.contentView = nil; window.close() }
+        let baseline = InstanceTracker.shared.activeCount
+        let old = try XCTUnwrap(MontageView(frame: window.contentLayoutRect, isPreview: false))
+        XCTAssertFalse(old.isAnimating)
+        window.contentView = old
+        XCTAssertTrue(old.isAnimating)
+        XCTAssertEqual(InstanceTracker.shared.activeCount, baseline + 1)
+        let layers = old.layer?.sublayers?.count
+        old.startAnimation() // Apple may issue a late, duplicate start.
+        XCTAssertEqual(old.layer?.sublayers?.count, layers)
+        XCTAssertEqual(InstanceTracker.shared.activeCount, baseline + 1)
+
+        let replacement = try XCTUnwrap(MontageView(frame: window.contentLayoutRect, isPreview: false))
+        window.contentView = replacement // Reproduces replacement after Apply.
+        XCTAssertFalse(old.isAnimating)
+        XCTAssertTrue(old.layer?.sublayers?.isEmpty ?? true)
+        XCTAssertTrue(replacement.isAnimating)
+        XCTAssertEqual(InstanceTracker.shared.activeCount, baseline + 1)
+        window.contentView = nil
+        XCTAssertFalse(replacement.isAnimating)
+        XCTAssertTrue(replacement.layer?.sublayers?.isEmpty ?? true)
+        XCTAssertEqual(InstanceTracker.shared.activeCount, baseline)
+    }
+
+    @MainActor
+    func testPreviewAttachmentDoesNotStartHiddenConfigurationHost() throws {
+        _ = NSApplication.shared
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 360),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.contentView = nil; window.close() }
+        let view = try XCTUnwrap(MontageView(frame: window.contentLayoutRect, isPreview: true))
+        window.contentView = view
+        XCTAssertFalse(view.isAnimating)
+        XCTAssertTrue(view.layer?.sublayers?.isEmpty ?? true)
+        view.startAnimation()
+        XCTAssertTrue(view.isAnimating)
+        view.stopAnimation()
+        XCTAssertFalse(view.isAnimating)
+    }
+
+    @MainActor
     func testRepeatedStartsAndStopsDoNotAccumulateGridOrStatusLayers() throws {
         let baseline = InstanceTracker.shared.activeCount
         let view = try XCTUnwrap(MontageView(frame: NSRect(x: 0, y: 0, width: 640, height: 360), isPreview: false))
